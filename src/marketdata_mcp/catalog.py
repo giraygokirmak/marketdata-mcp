@@ -63,8 +63,9 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "comparison": "headline-title overlap between the two feeds",
         "notes": (
             "Finviz supplies price reactions around each headline. The TradingView "
-            "leg needs MARKETAUX_API_TOKEN; without it the response is FINVIZ with "
-            "NOT_CONFIGURED in errors."
+            "leg is the Marketaux feed and needs MARKETAUX_API_TOKEN; without it "
+            "the response is FINVIZ-only (still complete and labelled). Sentiment "
+            "does NOT need the token — see market_sentiment."
         ),
     },
     {
@@ -252,11 +253,15 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
     {
         "name": "market_sentiment",
         "capability": "news-based sentiment score",
-        "providers": "TRADINGVIEW",
+        "providers": "FINVIZ",
         "comparison": "single-source",
         "notes": (
-            "Requires MARKETAUX_API_TOKEN; reports NOT_CONFIGURED rather than "
-            "inventing a score."
+            "No API key required. Uses Marketaux entity sentiment when "
+            "MARKETAUX_API_TOKEN is set (then labelled TRADINGVIEW); otherwise "
+            "scores Finviz headlines locally with VADER + a finance lexicon and "
+            "labels the response FINVIZ, because the headlines are Finviz's. "
+            "Returns sentiment_score=null rather than 0.0 when nothing can be "
+            "scored."
         ),
     },
     {

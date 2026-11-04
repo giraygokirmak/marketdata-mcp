@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from . import fv_access, tv_access
+from . import fv_access, sentiment, tv_access
 from .health import FINVIZ, MONITOR, TRADINGVIEW
 from .providers_state import DataProvider, envelope, error_code
 from .reconcile import ask, finalize, providers_in, single
@@ -43,17 +43,18 @@ def _single_response(
     source: str,
     warnings: list[str] | None = None,
     extra: dict[str, Any] | None = None,
+    provider: str = TRADINGVIEW,
 ) -> dict[str, Any]:
     MONITOR.ensure_started()
-    pair = single(TRADINGVIEW, data)
+    pair = single(provider, data)
     return finalize(
         pair,
-        sources={TRADINGVIEW: source},
+        sources={provider: source},
         warnings=warnings or [],
         data=data,
-        provider=DataProvider.TRADINGVIEW,
-        health_warn=MONITOR.warnings_for((TRADINGVIEW,)),
-        degraded=any(issue["provider"] == TRADINGVIEW for issue in MONITOR.issues()),
+        provider=DataProvider(provider),
+        health_warn=MONITOR.warnings_for((provider,)),
+        degraded=any(issue["provider"] == provider for issue in MONITOR.issues()),
         extra=extra,
     )
 
@@ -82,6 +83,68 @@ async def _offload_result(fn, *args, source: str, **kwargs) -> dict[str, Any]:
     if isinstance(data, dict) and data.get("error"):
         return _failed(data)
     return _single_response(data, source=source)
+
+
+# ── Sentiment (Marketaux when licensed, local otherwise) ─────────────────────
+
+
+async def _sentiment_payload(ticker: str, *, limit: int = 20) -> dict[str, Any]:
+    """Sentiment for one ticker, preferring Marketaux and never requiring a key.
+
+    Order of preference:
+      1. ``MARKETAUX_API_TOKEN`` set and usable -> Marketaux entity sentiment.
+      2. Marketaux unconfigured, rejected, out of quota or down -> Finviz
+         headlines scored locally by :mod:`marketdata_mcp.sentiment`
+         (deterministic, offline, free).
+      3. Finviz also unusable -> a labelled empty payload, never a fake score.
+
+    The caller cannot tell the difference from the shape alone; ``provider``
+    and ``scoring`` inside the payload always name the backend that ran, and a
+    licensed-vs-local switch is never silent.
+    """
+    licensed = await _run(marketaux_service.analyze_sentiment, ticker, limit=limit)
+    if (
+        isinstance(licensed, dict)
+        and not licensed.get("error")
+        and licensed.get("sentiment_score") is not None
+    ):
+        return licensed
+
+    try:
+        records = await fv_access.news(to_finviz(ticker), limit=limit, include_reactions=False)
+    except Exception as exc:  # noqa: BLE001 - fall back to an explicit gap
+        reason = getattr(exc, "message", None) or f"{type(exc).__name__}: {exc}"
+        upstream = (licensed or {}).get("error")
+        return {
+            "symbol": ticker.upper(),
+            "sentiment_score": None,
+            "sentiment_label": "Unavailable",
+            "posts_analyzed": 0,
+            "bullish_count": 0,
+            "bearish_count": 0,
+            "neutral_count": 0,
+            "top_posts": [],
+            "sources": [],
+            "provider": "unavailable",
+            "note": (
+                "No sentiment could be computed. Marketaux: "
+                f"{upstream or 'not configured'}; Finviz headlines: {reason}."
+            ),
+        }
+
+    scored = sentiment.score_headlines(
+        (records or {}).get("news") or [],
+        symbol=ticker,
+        source_label=f"Finviz headlines (local scoring): {records.get('source') or 'finviz.com'}",
+        limit=limit,
+    )
+    scored["as_of"] = (records or {}).get("as_of")
+    # Preserve why the licensed path was skipped, without turning it into an
+    # error: falling back is normal when no token is configured.
+    upstream_note = (licensed or {}).get("error")
+    if upstream_note:
+        scored["licensed_path_unavailable"] = upstream_note
+    return scored
 
 
 # ── Crypto ───────────────────────────────────────────────────────────────────
@@ -377,25 +440,45 @@ async def bitcoin_market_pulse() -> dict[str, Any]:
 
 
 async def market_sentiment(symbol: str, category: str = "all", limit: int = 20) -> dict[str, Any]:
-    """News-based sentiment for a symbol (TradingView-only).
+    """News-based sentiment for a symbol, with no API key required.
 
-    Sentiment requires a Marketaux API token (``MARKETAUX_API_TOKEN``). Without
-    it the tool reports that clearly instead of inventing a score.
+    Prefers the licensed Marketaux entity sentiment when ``MARKETAUX_API_TOKEN``
+    is set. Without a token it scores Finviz headlines locally (VADER with a
+    financial lexicon) — deterministic, offline and free. Either way the payload
+    names the backend in ``provider``/``scoring`` and never fabricates a score
+    when there is no material to score.
 
     Args:
         symbol: Ticker.
-        category: News category.
-        limit: Articles to analyse.
+        category: News category (used by the Marketaux path only).
+        limit: Headlines to analyse.
 
     Returns:
-        Envelope labelled ``TRADINGVIEW`` with the sentiment score and label.
+        Envelope labelled ``TRADINGVIEW`` whose ``data`` carries
+        ``sentiment_score``, ``sentiment_label``, the bullish/bearish/neutral
+        counts and the strongest headlines.
     """
-    return await _offload_result(
-        marketaux_service.analyze_sentiment,
-        strip_exchange(symbol).upper(),
-        category=category,
-        limit=limit,
-        source="Marketaux sentiment (via TradingView provider)",
+    ticker = strip_exchange(symbol).upper()
+    try:
+        data = await _sentiment_payload(ticker, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        return _failed(exc)
+    if data.get("sentiment_score") is None:
+        return _single_response(
+            data,
+            source="No sentiment backend available",
+            warnings=[data.get("note", "Sentiment unavailable.")],
+        )
+    if data.get("provider") == "marketaux":
+        return _single_response(
+            data, source="Marketaux entity sentiment (via TradingView provider)"
+        )
+    # The numbers are Finviz headlines; only the scoring is ours. Labelling this
+    # TRADINGVIEW would claim a provenance the data does not have.
+    return _single_response(
+        data,
+        source="Finviz headlines scored locally (VADER)",
+        provider=FINVIZ,
     )
 
 
@@ -421,11 +504,15 @@ async def egx_market_overview(timeframe: str = "1D", limit: int = 10) -> dict[st
 async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: str = "1D") -> dict[str, Any]:
     """Technical analysis, news and sentiment in one call, cross-checked on price.
 
-    Runs the TradingView technical read plus the provider's news sentiment, then
-    pulls Finviz's latest close to confirm the price the analysis was built on.
-    This is the one composite that can legitimately return ``BOTH``: the price
-    leg is dual-sourced, while the analysis and sentiment legs remain
-    TradingView-only and are labelled per field.
+    Runs the TradingView technical read plus news sentiment, then pulls Finviz's
+    latest close to confirm the price the analysis was built on. This is the one
+    composite that can legitimately return ``BOTH``: the price leg is
+    dual-sourced, while the analysis and sentiment legs remain single-source and
+    are labelled per field.
+
+    Sentiment needs no API key: Marketaux is used when ``MARKETAUX_API_TOKEN`` is
+    set, otherwise Finviz headlines are scored locally. The ``data.news`` leg
+    stays Marketaux-only, so it is empty (and says why) without a token.
 
     Args:
         symbol: Ticker.
@@ -445,13 +532,11 @@ async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: st
             exchange=exchange,
             timeframe=timeframe,
         )
-        sentiment = await _run(
-            marketaux_service.analyze_sentiment, ticker, limit=20
-        )
+        sentiment_data = await _sentiment_payload(ticker, limit=20)
         news = await _run(
             marketaux_service.fetch_news_summary, ticker, limit=10
         )
-        return {"analysis": analysis, "sentiment": sentiment, "news": news}
+        return {"analysis": analysis, "sentiment": sentiment_data, "news": news}
 
     async def fv_call() -> dict[str, Any]:
         return await fv_access.snapshot(to_finviz(ticker))
@@ -466,6 +551,12 @@ async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: st
     tv_price = (analysis.get("price_data") or {}).get("current_price")
     fv_price = (fv_payload.get("numeric") or {}).get("Price")
 
+    sentiment_data = tv_payload.get("sentiment") or {}
+    sentiment_source = (
+        "Marketaux entity sentiment (via TradingView provider)"
+        if sentiment_data.get("provider") == "marketaux"
+        else "Finviz headlines scored locally (VADER)"
+    )
     data = {
         "symbol": ticker,
         "analysis": analysis,
@@ -476,9 +567,10 @@ async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: st
     return finalize(
         pair,
         sources={
-            TRADINGVIEW: "TradingView technical analysis + Marketaux sentiment",
+            TRADINGVIEW: "TradingView technical analysis",
             FINVIZ: f"https://finviz.com/stock?t={to_finviz(ticker)}",
         },
+        extra={"sentiment_source": sentiment_source},
         data=data,
         health_warn=MONITOR.warnings_for(providers_in(pair) or (TRADINGVIEW, FINVIZ)),
         degraded=any(

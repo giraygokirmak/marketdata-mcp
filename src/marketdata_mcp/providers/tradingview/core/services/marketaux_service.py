@@ -1,10 +1,19 @@
 """
-Licensed news + sentiment via the Marketaux API.
+Licensed news + sentiment via the Marketaux API, with a token-free fallback.
 
 Replaces the RSS scrape (news_service.py) and the Reddit scrape
 (sentiment_service.py) with a single licensed source. Both public functions
 keep the exact names and output shapes of the modules they replace, so
 server.py only swaps imports.
+
+**A token is optional.** With ``MARKETAUX_API_TOKEN`` set, this module is the
+preferred backend: licensed article text plus Marketaux's own entity sentiment.
+Without it, callers degrade instead of failing:
+
+* ``fetch_news_summary`` returns an empty, clearly-labelled payload. Finviz
+  remains the news source, so ``stock_news`` still works.
+* ``analyze_sentiment`` is scored locally by :mod:`marketdata_mcp.sentiment`
+  over Finviz headlines — deterministic, offline, no key.
 
 Design constraints (free plan: 100 requests/day, 3 articles/request):
   - ONE underlying fetch per symbol serves BOTH news and sentiment —
@@ -16,7 +25,7 @@ Design constraints (free plan: 100 requests/day, 3 articles/request):
     shape-compatible "unavailable" payload — never raise into the tool layer.
 
 Env:
-  MARKETAUX_API_TOKEN   required for live data (no token -> graceful stub)
+  MARKETAUX_API_TOKEN   optional, without it the local scorer takes over
   MARKETAUX_DAILY_BUDGET optional, default 90
 """
 from __future__ import annotations
@@ -239,11 +248,17 @@ def analyze_sentiment(
 ) -> dict:
     """News-based sentiment via Marketaux entity sentiment scores. Same output
     shape as the old Reddit-based analyze_sentiment (top_posts now carries
-    news articles instead of Reddit posts)."""
+    news articles instead of Reddit posts).
+
+    Without ``MARKETAUX_API_TOKEN`` this provider has nothing to score and says
+    so. The tool layer (``tools_tradingview._sentiment_payload``) then swaps in
+    :mod:`marketdata_mcp.sentiment`, which scores Finviz headlines locally — so
+    the *tool* works token-free even though this provider needs a key.
+    """
     base, _ = _clean_symbol(symbol)
     if not os.environ.get("MARKETAUX_API_TOKEN"):
         return {
-            "symbol": (symbol or "").upper(), "sentiment_score": 0.0,
+            "symbol": (symbol or "").upper(), "sentiment_score": None,
             "sentiment_label": "Unavailable", "posts_analyzed": 0,
             "bullish_count": 0, "bearish_count": 0, "neutral_count": 0,
             "top_posts": [], "sources": ["Marketaux news"],
@@ -252,6 +267,29 @@ def analyze_sentiment(
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     articles, freshness = _get_articles(symbol, category)
+
+    # An empty article list with no cache to fall back on means the token was
+    # rejected, the quota is gone or the upstream is down. Returning 0.0 here
+    # would read as "the news is neutral", which is a fabricated result — the
+    # caller must be told there was nothing to score and left to fall back.
+    if not articles:
+        return {
+            "symbol": (symbol or "").upper(),
+            "sentiment_score": None,
+            "sentiment_label": "Unavailable",
+            "posts_analyzed": 0,
+            "bullish_count": 0,
+            "bearish_count": 0,
+            "neutral_count": 0,
+            "top_posts": [],
+            "sources": ["Marketaux news"],
+            "provider": "marketaux",
+            "error": (
+                "Marketaux returned no articles "
+                f"({freshness}); check MARKETAUX_API_TOKEN and the daily budget"
+            ),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
     scores: list[float] = []
     top: list[dict] = []

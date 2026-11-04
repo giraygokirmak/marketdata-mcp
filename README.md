@@ -71,6 +71,11 @@ Implementation: [`reconcile.py`](src/marketdata_mcp/reconcile.py) (fan-out + com
 `stock_news` needs `MARKETAUX_API_TOKEN` for the TradingView leg; without it the response is
 `FINVIZ` with `NOT_CONFIGURED` in `errors` — and says so.
 
+**No tool requires an API key.** `market_sentiment` prefers Marketaux when
+`MARKETAUX_API_TOKEN` is set, and otherwise scores Finviz headlines locally (VADER with a
+financial lexicon) — deterministic, offline, free. Because the headlines are Finviz's, that
+path is labelled `FINVIZ`, not `TRADINGVIEW`. See [Sentiment](#sentiment-no-api-key-required).
+
 ### Finviz-only — served, labelled `FINVIZ`, explicitly unverified
 
 `stock_filings` · `stock_ownership` (insider + institutional + short interest) · `stock_peers` ·
@@ -84,7 +89,10 @@ TradingView has no equivalent dataset for any of these, so the envelope marks th
 `crypto_top_movers` · `crypto_bollinger_scan` · `crypto_volume_breakout` ·
 `crypto_multi_timeframe` · `crypto_multi_agent` · `futures_market_overview` · `futures_top_movers` ·
 `futures_watchlist` · `stock_backtest` · `stock_backtest_compare` · `market_snapshot` ·
-`bitcoin_market_pulse` · `market_sentiment` · `egx_market_overview`
+`bitcoin_market_pulse` · `egx_market_overview`
+
+`market_sentiment` is single-source too, but which source depends on the environment — see
+[Sentiment](#sentiment-no-api-key-required).
 
 ### Composite
 
@@ -96,6 +104,46 @@ TradingView has no equivalent dataset for any of these, so the envelope marks th
 - `marketdata_health` — run the probes now (`refresh=True`) or read the cached verdict.
 - `marketdata_tool_map` — every tool with its providers and comparison strategy, without any
   upstream call.
+
+---
+
+## Sentiment: no API key required
+
+`market_sentiment` has two backends, chosen at runtime. Both produce the same payload shape, and
+the payload always says which one ran (`provider`, `scoring`, and the top-level `data_provider`).
+
+| Condition | Backend | `data_provider` |
+| --- | --- | --- |
+| `MARKETAUX_API_TOKEN` set and usable | Marketaux entity sentiment (licensed) | `TRADINGVIEW` |
+| no token, or Marketaux rejected/quota/outage | Finviz headlines scored locally (VADER) | `FINVIZ` |
+| neither available | labelled empty payload, `sentiment_score: null` | `NONE` |
+
+Why the labels differ: the **numbers are Finviz headlines** in the local path — only the scoring is
+ours. Labelling that `TRADINGVIEW` would claim a provenance the data does not have.
+
+**Local scoring** ([`sentiment.py`](src/marketdata_mcp/sentiment.py)) is VADER (MIT, ships its own
+lexicon, no download) with a financial overlay. Plain VADER is tuned for social text and scores
+`"Apple beats estimates, raises guidance"` as **neutral**, because *beats* and *raises* are
+out-of-vocabulary. The overlay fixes that class of miss:
+
+| Headline | Score |
+| --- | --- |
+| `Apple beats estimates, raises guidance, shares surge` | `+0.88` |
+| `Analysts downgrade Apple on iPhone demand concerns` | `-0.57` |
+| `Apple stock drops on weak margin forecast` | `-0.66` |
+| `Apple: 3 Key Takeaways for Long-Term Investors` | `0.00` |
+
+Scoring is deterministic — the same headlines always produce the same number — and never touches
+the network.
+
+**A data gap is never dressed up as a finding.** `sentiment_score: 0.0` means "the tone is
+balanced", so it is never used for "nothing could be fetched". When there is no material to score
+the field is `null`, `sentiment_label` is `Unavailable`, and `note` says why. An invalid or
+expired Marketaux token therefore falls back to local scoring and records the reason in
+`licensed_path_unavailable` — it does not report a neutral market.
+
+`MARKETAUX_API_TOKEN` also adds the second leg of `stock_news` (licensed article text + URLs).
+Without it, `stock_news` is `FINVIZ`-only — complete, labelled, and still useful.
 
 ---
 
@@ -196,7 +244,8 @@ Everything is optional. See [`.env.example`](.env.example) for the full list.
 | `FINVIZ_TIMEOUT` | `25` | finviz.com HTTP timeout (s) |
 | `FINVIZ_CHART_DIR` | `~/.marketdata-mcp/charts` | Chart PNG output |
 | `TRADINGVIEW_MCP_MIN_INTERVAL_S` | `0.25` | Scanner request spacing |
-| `MARKETAUX_API_TOKEN` | — | Enables news + sentiment (TradingView leg) |
+| `MARKETAUX_API_TOKEN` | — | Optional. Enables licensed Marketaux news + entity sentiment |
+| `MARKETAUX_DAILY_BUDGET` | `90` | Marketaux request cap per day (free plan is 100) |
 
 No proxy configuration exists: both providers reach their upstreams directly.
 
@@ -223,7 +272,7 @@ No proxy configuration exists: both providers reach their upstreams directly.
 
 ```bash
 pip install -e ".[dev]"     # or: uv pip install -e . --group dev
-pytest                      # 74 hermetic tests, no network
+pytest                      # 110 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 ```
 
@@ -239,6 +288,7 @@ src/marketdata_mcp/
 ├── providers_state.py    DataProvider enum, errors, response envelope
 ├── reconcile.py          concurrent fan-out, comparison, fallback
 ├── merge_helpers.py      pure payload shapers (raw provider dict -> fields)
+├── sentiment.py          token-free headline scoring (VADER + finance lexicon)
 ├── symbols.py            BRK-B <-> BRK.B, ^GSPC <-> SPX, venue mapping
 ├── health.py             upstream probes, fingerprints, drift state
 ├── tv_access.py          typed access to the TradingView provider
