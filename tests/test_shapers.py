@@ -1,7 +1,7 @@
 """Tests for the provider payload shapers (pure mapping, no network)."""
 from __future__ import annotations
 
-from marketdata_mcp.merge_helpers import (
+from tapebasis.merge_helpers import (
     fv_earnings_fields,
     fv_indices_fields,
     fv_news_fields,

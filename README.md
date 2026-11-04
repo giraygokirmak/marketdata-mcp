@@ -1,13 +1,28 @@
-# marketdata-mcp
+<div align="center">
 
-One MCP server that serves **TradingView** and **Finviz** market data together, cross-checks every
-overlapping figure, and labels each response with the provider that actually produced it.
+<img src="docs/logo.svg" alt="Tapebasis" width="360">
+
+**Two tapes, one basis.** An MCP server that serves **TradingView** and **Finviz** market data
+together, cross-checks every overlapping figure, and labels each response with the provider that
+actually produced it.
+
+</div>
+
+---
+
+*Basis* is the finance term for the price difference between two markets quoting the same asset.
+*Tape* is the ticker tape. Tapebasis is the spread between two feeds, measured on every call —
+zero when they agree, reported when they don't.
 
 The point is redundancy you can *see*. When both providers answer, the data is cross-verified. When
 only one answers, you get the data — clearly marked as single-source. When neither answers, you get
 `NONE` instead of a plausible-looking number. And because both providers scrape or call undocumented
 upstreams, a background monitor probes every endpoint and reports API/schema drift inside ordinary
 tool responses.
+
+[![Tests](https://github.com/giraygokirmak/tapebasis/actions/workflows/test.yml/badge.svg)](https://github.com/giraygokirmak/tapebasis/actions/workflows/test.yml)
+[![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-3776ab)](https://github.com/giraygokirmak/tapebasis)
+[![License: MIT](https://img.shields.io/badge/license-MIT-5eead4)](LICENSE)
 
 ---
 
@@ -59,9 +74,9 @@ stay in `comparisons`, the field is named in `notice` and `warnings`, and the re
 (both *did* answer — they just disagree). The single value in `data` is the fresher print, and the
 notice says so; an agent can see exactly how far apart the two sources are.
 
-Implementation: [`reconcile.py`](src/marketdata_mcp/reconcile.py) (fan-out + comparison),
-[`freshness.py`](src/marketdata_mcp/freshness.py) (print-time selection),
-[`providers_state.py`](src/marketdata_mcp/providers_state.py) (envelope).
+Implementation: [`reconcile.py`](src/tapebasis/reconcile.py) (fan-out + comparison),
+[`freshness.py`](src/tapebasis/freshness.py) (print-time selection),
+[`providers_state.py`](src/tapebasis/providers_state.py) (envelope).
 
 ---
 
@@ -114,8 +129,8 @@ TradingView has no equivalent dataset for any of these, so the envelope marks th
 
 ### Ops
 
-- `marketdata_health` — run the probes now (`refresh=True`) or read the cached verdict.
-- `marketdata_tool_map` — every tool with its providers and comparison strategy, without any
+- `tapebasis_health` — run the probes now (`refresh=True`) or read the cached verdict.
+- `tapebasis_tool_map` — every tool with its providers and comparison strategy, without any
   upstream call.
 
 ---
@@ -134,7 +149,7 @@ the payload always says which one ran (`provider`, `scoring`, and the top-level 
 Why the labels differ: the **numbers are Finviz headlines** in the local path — only the scoring is
 ours. Labelling that `TRADINGVIEW` would claim a provenance the data does not have.
 
-**Local scoring** ([`sentiment.py`](src/marketdata_mcp/sentiment.py)) is VADER (MIT, ships its own
+**Local scoring** ([`sentiment.py`](src/tapebasis/sentiment.py)) is VADER (MIT, ships its own
 lexicon, no download) with a financial overlay. Plain VADER is tuned for social text and scores
 `"Apple beats estimates, raises guidance"` as **neutral**, because *beats* and *raises* are
 out-of-vocabulary. The overlay fixes that class of miss:
@@ -165,7 +180,7 @@ Without it, `stock_news` is `FINVIZ`-only — complete, labelled, and still usef
 Both providers depend on things that can move without notice: Finviz's HTML class names and
 unversioned `/api/*` JSON islands, TradingView's scanner POST schema, Yahoo's chart API shape.
 
-The monitor in [`health.py`](src/marketdata_mcp/health.py) probes each upstream **independently of
+The monitor in [`health.py`](src/tapebasis/health.py) probes each upstream **independently of
 the provider code paths**, so a provider can't hide a break by catching its own exception:
 
 | Probe | Asserts |
@@ -177,7 +192,7 @@ the provider code paths**, so a provider can't hide a break by catching its own 
 | `tradingview.yahoo_chart_api` | `chart.result[0].meta` / `.timestamp` present |
 
 Each successful probe records a SHA-256 fingerprint of the payload's key paths as a **baseline**,
-persisted to `~/.marketdata-mcp/health_state.json`. Later probes compare against it, so a renamed
+persisted to `~/.tapebasis/health_state.json`. Later probes compare against it, so a renamed
 field is caught even if the endpoint still returns 200. Verdicts:
 
 - `OK` — status and shape match the baseline
@@ -186,7 +201,7 @@ field is caught even if the endpoint still returns 200. Verdicts:
 - `UNKNOWN` — not probed yet
 
 Drift is surfaced, not swallowed: every tool response gets a `warnings` entry, `degraded: true`, and
-a `WARNING` appended to `notice`. The monitor runs in the background (`MARKETDATA_HEALTH_INTERVAL`,
+a `WARNING` appended to `notice`. The monitor runs in the background (`TAPEBASIS_HEALTH_INTERVAL`,
 default 300 s) and tool calls only read the cached verdict.
 
 ---
@@ -196,8 +211,8 @@ default 300 s) and tool calls only read the cached verdict.
 Requires Python 3.10–3.13.
 
 ```bash
-git clone https://github.com/giraygokirmak/marketdata-mcp.git
-cd marketdata-mcp
+git clone https://github.com/giraygokirmak/tapebasis.git
+cd tapebasis
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
@@ -207,8 +222,8 @@ pip install -e .
 ```json
 {
   "mcpServers": {
-    "marketdata": {
-      "command": "/path/to/.venv/bin/marketdata-mcp",
+    "tapebasis": {
+      "command": "/path/to/.venv/bin/tapebasis",
       "env": { "MARKETAUX_API_TOKEN": "" }
     }
   }
@@ -218,7 +233,7 @@ pip install -e .
 ### Streamable HTTP
 
 ```bash
-marketdata-mcp streamable-http --host 0.0.0.0 --port 8000
+tapebasis streamable-http --host 0.0.0.0 --port 8000
 curl -s localhost:8000/health
 ```
 
@@ -229,10 +244,10 @@ curl -s localhost:8000/health
 Every push to `main` publishes a multi-arch image to the GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/giraygokirmak/marketdata-mcp:latest
-docker run -d --name marketdata-mcp -p 6013:8000 \
-  -v marketdata-state:/home/mcpuser/.marketdata-mcp \
-  ghcr.io/giraygokirmak/marketdata-mcp:latest
+docker pull ghcr.io/giraygokirmak/tapebasis:latest
+docker run -d --name tapebasis -p 6013:8000 \
+  -v tapebasis-state:/home/mcpuser/.tapebasis \
+  ghcr.io/giraygokirmak/tapebasis:latest
 ```
 
 Tags are `latest` and `main` for the branch head, `sha-<shortsha>` for an exact commit, and
@@ -248,16 +263,16 @@ curl -s localhost:6013/health
 ```
 
 Port `6013` is the published host port; change the mapping in `docker-compose.yml` if it conflicts
-with something already running. The named volume `marketdata-state` persists chart PNGs **and** the
+with something already running. The named volume `tapebasis-state` persists chart PNGs **and** the
 health baselines, so drift detection survives restarts.
 
 Standalone:
 
 ```bash
-docker build -t marketdata-mcp:latest .
-docker run -d --name marketdata-mcp -p 6013:8000 \
-  -v marketdata-state:/home/mcpuser/.marketdata-mcp \
-  marketdata-mcp:latest
+docker build -t tapebasis:latest .
+docker run -d --name tapebasis -p 6013:8000 \
+  -v tapebasis-state:/home/mcpuser/.tapebasis \
+  tapebasis:latest
 ```
 
 ## Configuration
@@ -266,13 +281,13 @@ Everything is optional. See [`.env.example`](.env.example) for the full list.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MARKETDATA_HEALTH_ENABLED` | `true` | Turn the drift monitor on/off |
-| `MARKETDATA_HEALTH_INTERVAL` | `300` | Seconds between background probe rounds |
-| `MARKETDATA_HEALTH_TTL` | `60` | Seconds a cached verdict is reused |
-| `MARKETDATA_HEALTH_STATE` | `~/.marketdata-mcp/health_state.json` | Baseline file |
+| `TAPEBASIS_HEALTH_ENABLED` | `true` | Turn the drift monitor on/off |
+| `TAPEBASIS_HEALTH_INTERVAL` | `300` | Seconds between background probe rounds |
+| `TAPEBASIS_HEALTH_TTL` | `60` | Seconds a cached verdict is reused |
+| `TAPEBASIS_HEALTH_STATE` | `~/.tapebasis/health_state.json` | Baseline file |
 | `FINVIZ_CACHE_TTL` | `30` | Scraped-page cache lifetime (s) |
 | `FINVIZ_TIMEOUT` | `25` | finviz.com HTTP timeout (s) |
-| `FINVIZ_CHART_DIR` | `~/.marketdata-mcp/charts` | Chart PNG output |
+| `FINVIZ_CHART_DIR` | `~/.tapebasis/charts` | Chart PNG output |
 | `TRADINGVIEW_MCP_MIN_INTERVAL_S` | `0.25` | Scanner request spacing |
 | `MARKETAUX_API_TOKEN` | — | Optional. Enables licensed Marketaux news + entity sentiment |
 | `MARKETAUX_DAILY_BUDGET` | `90` | Marketaux request cap per day (free plan is 100) |
@@ -313,7 +328,7 @@ baseline and assert the warning reaches a normal tool response.
 ## Layout
 
 ```
-src/marketdata_mcp/
+src/tapebasis/
 ├── server.py             FastMCP instance, lifespan, /health, CLI
 ├── providers_state.py    DataProvider enum, errors, response envelope
 ├── reconcile.py          concurrent fan-out, comparison, fallback, notice text
@@ -334,7 +349,7 @@ src/marketdata_mcp/
 ## Documentation
 
 The full manual lives in [`docs/wiki/`](docs/wiki/) and is mirrored to the
-[GitHub wiki](https://github.com/giraygokirmak/marketdata-mcp/wiki). Pages are authored with
+[GitHub wiki](https://github.com/giraygokirmak/tapebasis/wiki). Pages are authored with
 wiki-style links, so the same files render correctly in both places — `docs/` is the source of
 truth, the wiki is generated from it:
 

@@ -3,8 +3,8 @@
 ## Setup
 
 ```bash
-git clone https://github.com/giraygokirmak/marketdata-mcp.git
-cd marketdata-mcp
+git clone https://github.com/giraygokirmak/tapebasis.git
+cd tapebasis
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
@@ -44,7 +44,7 @@ ordinary tool response — proving the monitor is wired into real responses, not
 ## Layout
 
 ```
-src/marketdata_mcp/
+src/tapebasis/
 ├── server.py             FastMCP instance, lifespan, /health, CLI
 ├── providers_state.py    DataProvider enum, errors, response envelope
 ├── reconcile.py          concurrent fan-out, comparison, fallback
@@ -106,8 +106,8 @@ even though the tool lives in `tools_tradingview.py`.
 
 ```bash
 pytest
-python -m pyflakes src/marketdata_mcp tests        # provider code has pre-existing noise
-python -m compileall -q src/marketdata_mcp
+python -m pyflakes src/tapebasis tests        # provider code has pre-existing noise
+python -m compileall -q src/tapebasis
 ```
 
 ## CI
@@ -121,7 +121,7 @@ Two GitHub Actions workflows:
 
 ## Editing these docs
 
-These pages are authored in [`docs/wiki/`](https://github.com/giraygokirmak/marketdata-mcp/tree/main/docs/wiki)
+These pages are authored in [`docs/wiki/`](https://github.com/giraygokirmak/tapebasis/tree/main/docs/wiki)
 in the repository, not in the wiki UI — the repo is the source of truth. After editing, publish:
 
 ```bash

@@ -8,8 +8,8 @@
 ## Install
 
 ```bash
-git clone https://github.com/giraygokirmak/marketdata-mcp.git
-cd marketdata-mcp
+git clone https://github.com/giraygokirmak/tapebasis.git
+cd tapebasis
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .
@@ -18,8 +18,8 @@ pip install -e .
 Verify:
 
 ```bash
-marketdata-mcp --help
-python -c "from marketdata_mcp import server; print('ok')"
+tapebasis --help
+python -c "from tapebasis import server; print('ok')"
 ```
 
 ## Run over stdio (most MCP clients)
@@ -31,8 +31,8 @@ stdio is the default transport. The client spawns the process and talks over std
 //                 (Linux: ~/.config/Claude/claude_desktop_config.json)
 {
   "mcpServers": {
-    "marketdata": {
-      "command": "/absolute/path/to/.venv/bin/marketdata-mcp",
+    "tapebasis": {
+      "command": "/absolute/path/to/.venv/bin/tapebasis",
       "env": {
         "MARKETAUX_API_TOKEN": ""     // optional; leave empty to use local scoring
       }
@@ -46,7 +46,7 @@ Use an **absolute** path: MCP clients do not inherit your shell's `PATH`.
 ## Run over streamable HTTP
 
 ```bash
-marketdata-mcp streamable-http --host 0.0.0.0 --port 8000
+tapebasis streamable-http --host 0.0.0.0 --port 8000
 ```
 
 | Flag | Env fallback | Default |
@@ -73,8 +73,8 @@ stock_quote("AAPL")
 market_indices()
 stock_news("NVDA")
 market_sentiment("TSLA")        # works with no API key
-marketdata_health()             # upstream drift/outage status
-marketdata_tool_map()           # what is dual-sourced, before calling anything
+tapebasis_health()             # upstream drift/outage status
+tapebasis_tool_map()           # what is dual-sourced, before calling anything
 ```
 
 ## Reading your first response

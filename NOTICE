@@ -1,4 +1,4 @@
-marketdata-mcp
+tapebasis
 ==============
 Copyright (c) 2026 Giray Gokirmak
 
@@ -6,14 +6,14 @@ This project is MIT-licensed (see LICENSE). It vendors code from upstream
 open-source projects, whose licenses and attributions are reproduced below.
 
 --------------------------------------------------------------------------------
-1. src/marketdata_mcp/providers/tradingview/
+1. src/tapebasis/providers/tradingview/
 --------------------------------------------------------------------------------
 Vendored from:  https://github.com/atilaahmettaner/tradingview-mcp
                 (via the fork https://github.com/giraygokirmak/tradingview-mcp,
                 commit 418f0c7c7d72d17ef10b021f97ccdd7f9e18264a)
 
 Modifications:  package namespace rewritten to
-                marketdata_mcp.providers.tradingview.*; the optional proxy
+                tapebasis.providers.tradingview.*; the optional proxy
                 layer (proxy_manager and all PROXY_* environment handling) was
                 removed; the upstream server entrypoint (MCP tool
                 registrations, server.py) was NOT vendored — this repository
@@ -45,17 +45,17 @@ Upstream license:
     IN THE SOFTWARE.
 
 The bundled exchange symbol lists in
-src/marketdata_mcp/providers/tradingview/coinlist/ are part of that upstream
+src/tapebasis/providers/tradingview/coinlist/ are part of that upstream
 project and carry the same license.
 
 --------------------------------------------------------------------------------
-2. src/marketdata_mcp/providers/finviz/
+2. src/tapebasis/providers/finviz/
 --------------------------------------------------------------------------------
 Vendored from:  https://github.com/giraygokirmak/finviz-mcp
                 (commit 0f9e5defd44f88c7ece254c0c2e07372b75fb06c)
 
 Modifications:  package namespace rewritten to
-                marketdata_mcp.providers.finviz.*; the optional proxy layer
+                tapebasis.providers.finviz.*; the optional proxy layer
                 (proxy_manager and all PROXY_* environment handling) was
                 removed; the upstream server entrypoint (MCP tool
                 registrations, server.py) was NOT vendored — this repository
@@ -78,7 +78,7 @@ feedparser, requests, python-dateutil, vaderSentiment) are not vendored; they
 are installed from PyPI under their own licenses. See each project for details.
 
 vaderSentiment (MIT, https://github.com/cjhutto/vaderSentiment) ships the
-VADER sentiment lexicon used by marketdata_mcp/sentiment.py for local,
+VADER sentiment lexicon used by tapebasis/sentiment.py for local,
 token-free headline scoring. That module adds its own financial vocabulary on
 top; the base lexicon and scoring algorithm are VADER's.
 

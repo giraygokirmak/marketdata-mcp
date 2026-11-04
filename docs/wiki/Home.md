@@ -1,7 +1,13 @@
-# marketdata-mcp
+# Tapebasis
 
-One MCP server that serves **TradingView** and **Finviz** market data together, cross-checks every
-overlapping figure, and labels each response with the provider that actually produced it.
+<img src="https://raw.githubusercontent.com/giraygokirmak/tapebasis/main/docs/logo.svg" alt="Tapebasis" width="300">
+
+**Two tapes, one basis.** An MCP server that serves **TradingView** and **Finviz** market data
+together, cross-checks every overlapping figure, and labels each response with the provider that
+actually produced it.
+
+*Basis* is the finance term for the price difference between two markets quoting the same asset.
+*Tape* is the ticker tape. Tapebasis is the spread between two feeds, measured on every call.
 
 The point is redundancy you can *see*. When both providers answer, the data is cross-verified. When
 only one answers, you get the data — clearly marked as single-source. When neither answers, you get
@@ -95,8 +101,8 @@ Full detail: [Response Contract](Response-Contract).
 ## Quick start
 
 ```bash
-git clone https://github.com/giraygokirmak/marketdata-mcp.git
-cd marketdata-mcp
+git clone https://github.com/giraygokirmak/tapebasis.git
+cd tapebasis
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
@@ -105,8 +111,8 @@ pip install -e .
 // Claude Desktop / any stdio MCP client
 {
   "mcpServers": {
-    "marketdata": {
-      "command": "/path/to/.venv/bin/marketdata-mcp"
+    "tapebasis": {
+      "command": "/path/to/.venv/bin/tapebasis"
     }
   }
 }
@@ -114,15 +120,15 @@ pip install -e .
 
 ```bash
 # HTTP
-marketdata-mcp streamable-http --host 0.0.0.0 --port 8000
+tapebasis streamable-http --host 0.0.0.0 --port 8000
 curl -s localhost:8000/health
 ```
 
 ```bash
 # Docker (prebuilt image from GHCR)
-docker run -d --name marketdata-mcp -p 6013:8000 \
-  -v marketdata-state:/home/mcpuser/.marketdata-mcp \
-  ghcr.io/giraygokirmak/marketdata-mcp:latest
+docker run -d --name tapebasis -p 6013:8000 \
+  -v tapebasis-state:/home/mcpuser/.tapebasis \
+  ghcr.io/giraygokirmak/tapebasis:latest
 curl -s localhost:6013/health
 ```
 
@@ -150,4 +156,4 @@ tone — not a prediction, and not a trading signal.
 
 ## License
 
-MIT — see [LICENSE](https://github.com/giraygokirmak/marketdata-mcp/blob/main/LICENSE).
+MIT — see [LICENSE](https://github.com/giraygokirmak/tapebasis/blob/main/LICENSE).

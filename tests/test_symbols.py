@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from marketdata_mcp.symbols import (
+from tapebasis.symbols import (
     INDEX_ALIASES,
     canonical_index,
     is_equity,

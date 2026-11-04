@@ -21,7 +21,7 @@ mislabelling this server exists to prevent. So the local path is `FINVIZ`, and
 
 ## Local scoring
 
-[`sentiment.py`](https://github.com/giraygokirmak/marketdata-mcp/blob/main/src/marketdata_mcp/sentiment.py) is VADER (MIT; ships its own lexicon,
+[`sentiment.py`](https://github.com/giraygokirmak/tapebasis/blob/main/src/tapebasis/sentiment.py) is VADER (MIT; ships its own lexicon,
 no download, no network) with a financial overlay.
 
 Plain VADER is tuned for social-media text and scores financial headlines as neutral more often than

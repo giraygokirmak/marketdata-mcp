@@ -14,11 +14,11 @@ Every setting is optional. Defaults are chosen so a bare `pip install` works.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MARKETDATA_HEALTH_ENABLED` | `true` | Turn the drift monitor on/off |
-| `MARKETDATA_HEALTH_INTERVAL` | `300` | Seconds between background probe rounds |
-| `MARKETDATA_HEALTH_TTL` | `60` | Seconds a cached verdict is reused |
-| `MARKETDATA_HEALTH_STATE` | `~/.marketdata-mcp/health_state.json` | Baseline + verdict file |
-| `MARKETDATA_HEALTH_TIMEOUT` | `12` | Per-probe HTTP timeout (s) |
+| `TAPEBASIS_HEALTH_ENABLED` | `true` | Turn the drift monitor on/off |
+| `TAPEBASIS_HEALTH_INTERVAL` | `300` | Seconds between background probe rounds |
+| `TAPEBASIS_HEALTH_TTL` | `60` | Seconds a cached verdict is reused |
+| `TAPEBASIS_HEALTH_STATE` | `~/.tapebasis/health_state.json` | Baseline + verdict file |
+| `TAPEBASIS_HEALTH_TIMEOUT` | `12` | Per-probe HTTP timeout (s) |
 
 See [Health Monitor](Health-Monitor).
 
@@ -29,7 +29,7 @@ See [Health Monitor](Health-Monitor).
 | `FINVIZ_CACHE_TTL` | `30` | Scraped-page cache lifetime (s) |
 | `FINVIZ_TIMEOUT` | `25` | finviz.com HTTP timeout (s) |
 | `FINVIZ_MAX_RETRIES` | `2` | Retries per failed request |
-| `FINVIZ_CHART_DIR` | `~/.marketdata-mcp/charts` | Chart PNG output directory |
+| `FINVIZ_CHART_DIR` | `~/.tapebasis/charts` | Chart PNG output directory |
 | `FINVIZ_NEWS_TTL` | `60` | News cache lifetime (s) |
 | `FINVIZ_USER_AGENT` | browser UA | Override the User-Agent sent to finviz.com |
 
@@ -81,9 +81,9 @@ need egress control, do it at the network or container level.
 
 ```bash
 # Health monitor
-MARKETDATA_HEALTH_ENABLED=true
-MARKETDATA_HEALTH_INTERVAL=300
-MARKETDATA_HEALTH_TTL=60
+TAPEBASIS_HEALTH_ENABLED=true
+TAPEBASIS_HEALTH_INTERVAL=300
+TAPEBASIS_HEALTH_TTL=60
 
 # Finviz
 FINVIZ_CACHE_TTL=30
@@ -105,10 +105,10 @@ export them in the parent process.
 
 | Path | Contents | Safe to delete? |
 | --- | --- | --- |
-| `~/.marketdata-mcp/health_state.json` | Probe baselines + last verdicts | Yes — re-baselines on next round |
-| `~/.marketdata-mcp/charts/` | Generated chart PNGs | Yes |
+| `~/.tapebasis/health_state.json` | Probe baselines + last verdicts | Yes — re-baselines on next round |
+| `~/.tapebasis/charts/` | Generated chart PNGs | Yes |
 
-Both live under `~/.marketdata-mcp` by default; in Docker that is the `marketdata-state` volume.
+Both live under `~/.tapebasis` by default; in Docker that is the `tapebasis-state` volume.
 
 ## Related
 

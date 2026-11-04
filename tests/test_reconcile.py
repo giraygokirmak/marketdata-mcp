@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from marketdata_mcp.providers_state import DataProvider, envelope, provider_from_success
-from marketdata_mcp.reconcile import (
+from tapebasis.providers_state import DataProvider, envelope, provider_from_success
+from tapebasis.reconcile import (
     TRADINGVIEW,
     FINVIZ,
     Attempt,

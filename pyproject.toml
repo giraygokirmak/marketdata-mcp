@@ -1,5 +1,5 @@
 [project]
-name = "marketdata-mcp-server"
+name = "tapebasis"
 version = "1.0.0"
 description = "MCP server that serves TradingView and Finviz market data together, cross-checks overlapping fields, labels every response BOTH/TRADINGVIEW/FINVIZ/NONE and monitors upstream schema drift"
 readme = "README.md"
@@ -9,7 +9,7 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [
   { name = "Giray Gokirmak", email = "giray@gokirmak.gen.tr" }
 ]
-urls = { Repository = "https://github.com/giraygokirmak/marketdata-mcp" }
+urls = { Repository = "https://github.com/giraygokirmak/tapebasis" }
 keywords = [
   "mcp", "market-data", "tradingview", "finviz", "cross-verification",
   "redundancy", "screener", "technical-analysis", "stocks", "crypto", "agents"
@@ -47,14 +47,14 @@ dependencies = [
 ]
 
 [project.scripts]
-marketdata-mcp = "marketdata_mcp.server:main"
+tapebasis = "tapebasis.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["marketdata_mcp*"]
+include = ["tapebasis*"]
 
 [tool.setuptools.package-data]
-marketdata_mcp = ["providers/tradingview/coinlist/*.txt"]
+tapebasis = ["providers/tradingview/coinlist/*.txt"]
 
 [project.optional-dependencies]
 dev = [

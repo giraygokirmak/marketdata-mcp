@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from marketdata_mcp import tools_finviz, tools_market
+from tapebasis import tools_finviz, tools_market
 
 
 @pytest.fixture
 def fake_providers(monkeypatch, tv_quote, fv_quote):
     """Patch both access layers with deterministic in-memory providers."""
-    from marketdata_mcp import fv_access, tv_access
+    from tapebasis import fv_access, tv_access
 
     state = {"tv": tv_quote, "fv": fv_quote}
 
@@ -91,7 +91,7 @@ async def test_quote_flags_a_real_mismatch_instead_of_hiding_it(fake_providers):
 
 @pytest.mark.asyncio
 async def test_finviz_only_tool_is_explicitly_single_source(monkeypatch):
-    from marketdata_mcp import fv_access
+    from tapebasis import fv_access
 
     async def fake_why(symbol):
         return {"ticker": "AAPL", "headline": "AAPL rises on product news"}
@@ -106,8 +106,8 @@ async def test_finviz_only_tool_is_explicitly_single_source(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_finviz_only_tool_reports_none_on_failure(monkeypatch):
-    from marketdata_mcp import fv_access
-    from marketdata_mcp.providers_state import ProviderError
+    from tapebasis import fv_access
+    from tapebasis.providers_state import ProviderError
 
     async def broken(symbol):
         raise ProviderError("FINVIZ", "upstream blocked", code="UPSTREAM_BLOCKED")
@@ -120,7 +120,7 @@ async def test_finviz_only_tool_reports_none_on_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_drift_warning_reaches_normal_tool_responses(fake_providers, _isolate_health_state):
-    from marketdata_mcp import health
+    from tapebasis import health
 
     _isolate_health_state.results = {
         "p": health.ProbeResult(

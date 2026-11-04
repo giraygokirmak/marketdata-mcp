@@ -39,7 +39,7 @@
 ## Modules
 
 ```
-src/marketdata_mcp/
+src/tapebasis/
 ├── server.py             FastMCP instance, lifespan, /health, CLI, MCP instructions
 ├── providers_state.py    DataProvider / Verification enums, error types, envelope()
 ├── reconcile.py          concurrent fan-out, field comparison, fallback, notice text
@@ -54,7 +54,7 @@ src/marketdata_mcp/
 ├── tools_market.py       the 9 dual-source tools
 ├── tools_finviz.py       the 8 Finviz-only tools
 ├── tools_tradingview.py  the 14 TradingView-only tools + combined_analysis
-├── tools_health.py       marketdata_health + marketdata_tool_map
+├── tools_health.py       tapebasis_health + tapebasis_tool_map
 └── providers/
     ├── tradingview/      provider layer (scanner, Yahoo quote, TA, backtest, …)
     └── finviz/           provider layer (quote HTML, screener, ownership, …)
@@ -107,7 +107,7 @@ which output field.
 
 ### `catalog.py` is plain data
 
-No imports, no side effects. `marketdata_tool_map` costs nothing to serve, so an agent can inspect
+No imports, no side effects. `tapebasis_tool_map` costs nothing to serve, so an agent can inspect
 capabilities before spending upstream requests.
 
 ## The fan-out contract

@@ -9,10 +9,10 @@ Every push to `main` publishes a multi-arch image to the GitHub Container Regist
 can skip the build entirely:
 
 ```bash
-docker pull ghcr.io/giraygokirmak/marketdata-mcp:latest
-docker run -d --name marketdata-mcp -p 6013:8000 \
-  -v marketdata-state:/home/mcpuser/.marketdata-mcp \
-  ghcr.io/giraygokirmak/marketdata-mcp:latest
+docker pull ghcr.io/giraygokirmak/tapebasis:latest
+docker run -d --name tapebasis -p 6013:8000 \
+  -v tapebasis-state:/home/mcpuser/.tapebasis \
+  ghcr.io/giraygokirmak/tapebasis:latest
 curl -s localhost:6013/health
 ```
 
@@ -44,10 +44,10 @@ conflicts with something already running.
 ## Standalone build
 
 ```bash
-docker build -t marketdata-mcp:latest .
-docker run -d --name marketdata-mcp -p 6013:8000 \
-  -v marketdata-state:/home/mcpuser/.marketdata-mcp \
-  marketdata-mcp:latest
+docker build -t tapebasis:latest .
+docker run -d --name tapebasis -p 6013:8000 \
+  -v tapebasis-state:/home/mcpuser/.tapebasis \
+  tapebasis:latest
 ```
 
 ## What the image does
@@ -67,13 +67,13 @@ The container runs as `mcpuser`, never root.
 
 | Path in container | Volume | Contents |
 | --- | --- | --- |
-| `/home/mcpuser/.marketdata-mcp` | `marketdata-state` | Chart PNGs + health baselines |
+| `/home/mcpuser/.tapebasis` | `tapebasis-state` | Chart PNGs + health baselines |
 
 Persisting the health state is not cosmetic: the drift baselines live there. Without the volume,
 every restart re-baselines and a slow-moving schema change could be adopted as the new normal.
 
 ```bash
-docker volume inspect marketdata-mcp_marketdata-state
+docker volume inspect tapebasis_tapebasis-state
 ```
 
 ## Healthcheck
@@ -105,11 +105,11 @@ environment:
   - HOST=0.0.0.0
   - FINVIZ_CACHE_TTL=30
   - FINVIZ_TIMEOUT=25
-  - MARKETDATA_HEALTH_ENABLED=true
-  - MARKETDATA_HEALTH_INTERVAL=300
-  - MARKETDATA_HEALTH_TTL=60
-  - MARKETDATA_HEALTH_STATE=/home/mcpuser/.marketdata-mcp/state/health_state.json
-  - FINVIZ_CHART_DIR=/home/mcpuser/.marketdata-mcp/charts
+  - TAPEBASIS_HEALTH_ENABLED=true
+  - TAPEBASIS_HEALTH_INTERVAL=300
+  - TAPEBASIS_HEALTH_TTL=60
+  - TAPEBASIS_HEALTH_STATE=/home/mcpuser/.tapebasis/state/health_state.json
+  - FINVIZ_CHART_DIR=/home/mcpuser/.tapebasis/charts
 ```
 
 `HOST=0.0.0.0` is required inside the container — binding to loopback would make the port mapping

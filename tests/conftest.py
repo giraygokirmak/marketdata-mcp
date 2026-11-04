@@ -10,19 +10,19 @@ import os
 import pytest
 
 # Health state must never be written to the real home directory from tests.
-os.environ.setdefault("MARKETDATA_HEALTH_STATE", "/tmp/marketdata-mcp-test/health.json")
-os.environ.setdefault("MARKETDATA_HEALTH_ENABLED", "false")
+os.environ.setdefault("TAPEBASIS_HEALTH_STATE", "/tmp/tapebasis-test/health.json")
+os.environ.setdefault("TAPEBASIS_HEALTH_ENABLED", "false")
 
 
 @pytest.fixture(autouse=True)
 def _isolate_health_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("MARKETDATA_HEALTH_STATE", str(tmp_path / "health.json"))
-    from marketdata_mcp import health
+    monkeypatch.setenv("TAPEBASIS_HEALTH_STATE", str(tmp_path / "health.json"))
+    from tapebasis import health
 
     monitor = health.HealthMonitor()
     monkeypatch.setattr(health, "HealthMonitor", lambda *a, **k: monitor)
 
-    from marketdata_mcp import tools_market, tools_finviz, tools_tradingview
+    from tapebasis import tools_market, tools_finviz, tools_tradingview
 
     for module in (tools_market, tools_finviz, tools_tradingview):
         monkeypatch.setattr(module, "MONITOR", monitor, raising=False)

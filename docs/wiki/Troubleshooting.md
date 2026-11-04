@@ -14,9 +14,9 @@ Symptom → cause → fix.
 | --- | --- | --- |
 | `UPSTREAM_TIMEOUT` | Provider too slow | Retry; raise `FINVIZ_TIMEOUT` if persistent |
 | `UPSTREAM_RATE_LIMIT` | Too many requests | Raise `TRADINGVIEW_MCP_MIN_INTERVAL_S` |
-| `UPSTREAM_BLOCKED` | WAF rejected the request | Usually transient; check `marketdata_health` |
+| `UPSTREAM_BLOCKED` | WAF rejected the request | Usually transient; check `tapebasis_health` |
 | `NO_DATA` | Provider answered, had nothing for this symbol | Check the ticker spelling |
-| `PARSE_ERROR` | Markup/JSON shape changed | See [health drift](#marketdata_health-reports-drift) |
+| `PARSE_ERROR` | Markup/JSON shape changed | See [health drift](#tapebasis_health-reports-drift) |
 | `NOT_CONFIGURED` | Feature needs a token | Add `MARKETAUX_API_TOKEN`, or ignore — data is still served |
 
 A single-source response is **not** a failure. The data is served and labelled; the notice says it is
@@ -29,7 +29,7 @@ not cross-verified.
 **Cause:** neither provider answered.
 
 1. Check `errors` — usually two entries.
-2. Run `marketdata_health(refresh=True)`.
+2. Run `tapebasis_health(refresh=True)`.
 3. Most common root cause is a lost network path or DNS, not the code.
 4. For an unknown symbol: `NO_DATA` from both is correct behaviour, not an outage.
 
@@ -37,7 +37,7 @@ Never present a value when `data_provider` is `NONE`.
 
 ---
 
-## `marketdata_health` reports `DRIFT`
+## `tapebasis_health` reports `DRIFT`
 
 **Cause:** an upstream changed shape — a renamed JSON field, a moved route, a missing HTML marker.
 The endpoint still answers 200, which is exactly why this is detected separately.
@@ -51,7 +51,7 @@ The endpoint still answers 200, which is exactly why this is detected separately
 silent wrong answer.
 
 ```bash
-rm ~/.marketdata-mcp/health_state.json     # only after fixing the parser
+rm ~/.tapebasis/health_state.json     # only after fixing the parser
 ```
 
 ---
@@ -159,7 +159,7 @@ Tuning: lower `FINVIZ_TIMEOUT` to fail faster, at the cost of losing slow-but-va
 not mark the container unhealthy. A stale cache can therefore look green while upstreams are broken.
 
 ```bash
-marketdata_health(refresh=True)
+tapebasis_health(refresh=True)
 ```
 
 ---
@@ -168,7 +168,7 @@ marketdata_health(refresh=True)
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 marketdata-mcp
+docker compose logs --tail=100 tapebasis
 ```
 
 1. `start_period` is 15 s; a slow first probe can trip an early check. Wait, then re-check.
@@ -177,14 +177,14 @@ docker compose logs --tail=100 marketdata-mcp
 
 ---
 
-## `ModuleNotFoundError: marketdata_mcp`
+## `ModuleNotFoundError: tapebasis`
 
 The package is not installed in the interpreter the MCP client uses.
 
 ```bash
 pip install -e .
 # or point the client at the venv's absolute path:
-#   "command": "/absolute/path/.venv/bin/marketdata-mcp"
+#   "command": "/absolute/path/.venv/bin/tapebasis"
 ```
 
 MCP clients do not inherit your shell `PATH`; absolute paths avoid the whole class of problem.

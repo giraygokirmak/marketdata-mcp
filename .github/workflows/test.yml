@@ -41,7 +41,7 @@ jobs:
         run: |
           .venv/bin/python - <<'PY'
           import asyncio
-          from marketdata_mcp.server import mcp
+          from tapebasis.server import mcp
 
           tools = asyncio.run(mcp.list_tools())
           names = {tool.name for tool in tools}
@@ -50,7 +50,7 @@ jobs:
               "stock_news", "stock_options_chain", "stock_earnings",
               "stock_extended_hours", "technical_analysis",
               "stock_filings", "stock_ownership", "stock_chart",
-              "marketdata_health", "marketdata_tool_map",
+              "tapebasis_health", "tapebasis_tool_map",
           }
           missing = required - names
           assert not missing, f"missing tools: {sorted(missing)}"

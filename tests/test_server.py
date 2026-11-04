@@ -12,7 +12,7 @@ import asyncio
 
 import pytest
 
-from marketdata_mcp import server
+from tapebasis import server
 
 
 def test_all_tools_are_registered():
@@ -50,8 +50,8 @@ def test_all_tools_are_registered():
         "market_sentiment",
         "egx_market_overview",
         "combined_analysis",
-        "marketdata_health",
-        "marketdata_tool_map",
+        "tapebasis_health",
+        "tapebasis_tool_map",
     }
     assert names == expected
     assert len(names) == 33
@@ -113,7 +113,7 @@ def test_ensure_started_is_safe_without_a_running_loop(_isolate_health_state):
 
 
 def test_tool_map_enumerates_every_registered_tool():
-    from marketdata_mcp.catalog import TOOL_CATALOG
+    from tapebasis.catalog import TOOL_CATALOG
 
     catalogued = {row["name"] for row in TOOL_CATALOG}
     registered = {tool.name for tool in asyncio.run(server.mcp.list_tools())}

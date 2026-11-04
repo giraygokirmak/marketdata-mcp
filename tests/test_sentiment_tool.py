@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from marketdata_mcp import tools_tradingview
+from tapebasis import tools_tradingview
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def no_token(monkeypatch):
 
 @pytest.fixture
 def fake_finviz_news(monkeypatch):
-    from marketdata_mcp import fv_access
+    from tapebasis import fv_access
 
     async def fake_news(symbol, limit=30, include_reactions=True):
         return {
@@ -83,7 +83,7 @@ async def test_sentiment_still_reports_a_direction(no_token, fake_finviz_news):
 @pytest.mark.asyncio
 async def test_no_fabricated_score_when_nothing_can_be_scored(no_token, monkeypatch):
     """Neither Marketaux nor Finviz available -> explicit gap, not 0.0/Neutral."""
-    from marketdata_mcp import fv_access
+    from tapebasis import fv_access
 
     async def broken(*args, **kwargs):
         raise RuntimeError("finviz down")
@@ -99,7 +99,7 @@ async def test_no_fabricated_score_when_nothing_can_be_scored(no_token, monkeypa
 @pytest.mark.asyncio
 async def test_marketaux_is_preferred_when_a_token_exists(monkeypatch):
     """A token flips the backend to the licensed path, not the local one."""
-    from marketdata_mcp.providers.tradingview.core.services import marketaux_service
+    from tapebasis.providers.tradingview.core.services import marketaux_service
 
     monkeypatch.setenv("MARKETAUX_API_TOKEN", "test-token")
 
@@ -128,7 +128,7 @@ async def test_rejected_token_falls_back_locally_instead_of_reporting_zero(
     could not fetch anything" makes a data gap look like a finding, so the
     invalid-token path must fall back and say why.
     """
-    from marketdata_mcp.providers.tradingview.core.services import marketaux_service
+    from tapebasis.providers.tradingview.core.services import marketaux_service
 
     monkeypatch.setenv("MARKETAUX_API_TOKEN", "invalid-token")
 
@@ -151,7 +151,7 @@ async def test_rejected_token_falls_back_locally_instead_of_reporting_zero(
 @pytest.mark.asyncio
 async def test_combined_analysis_sentiment_leg_needs_no_token(no_token, monkeypatch):
     """The composite's sentiment leg must also survive without a token."""
-    from marketdata_mcp import fv_access
+    from tapebasis import fv_access
 
     monkeypatch.setattr(
         tools_tradingview, "tv_access",

@@ -1,13 +1,13 @@
 services:
-  marketdata-mcp:
+  tapebasis:
     build:
       context: .
       dockerfile: Dockerfile
     # Built from this checkout. To run the published image instead, delete the
     # `build:` block above and uncomment this line:
-    # image: ghcr.io/giraygokirmak/marketdata-mcp:latest
-    image: marketdata-mcp:latest
-    container_name: marketdata-mcp
+    # image: ghcr.io/giraygokirmak/tapebasis:latest
+    image: tapebasis:latest
+    container_name: tapebasis
     # Host port mapping. Change 6013 if it conflicts with something already running.
     ports:
       - "6013:8000"
@@ -22,14 +22,14 @@ services:
       - FINVIZ_CACHE_TTL=30
       - FINVIZ_TIMEOUT=25
       # Provider health / schema-drift monitor.
-      - MARKETDATA_HEALTH_ENABLED=true
-      - MARKETDATA_HEALTH_INTERVAL=300
-      - MARKETDATA_HEALTH_TTL=60
-      - MARKETDATA_HEALTH_STATE=/home/mcpuser/.marketdata-mcp/state/health_state.json
-      - FINVIZ_CHART_DIR=/home/mcpuser/.marketdata-mcp/charts
+      - TAPEBASIS_HEALTH_ENABLED=true
+      - TAPEBASIS_HEALTH_INTERVAL=300
+      - TAPEBASIS_HEALTH_TTL=60
+      - TAPEBASIS_HEALTH_STATE=/home/mcpuser/.tapebasis/state/health_state.json
+      - FINVIZ_CHART_DIR=/home/mcpuser/.tapebasis/charts
     volumes:
       # Persist chart PNGs and the drift-detection baselines across restarts.
-      - marketdata-state:/home/mcpuser/.marketdata-mcp
+      - tapebasis-state:/home/mcpuser/.tapebasis
     healthcheck:
       test:
         - CMD
@@ -42,4 +42,4 @@ services:
       retries: 3
 
 volumes:
-  marketdata-state:
+  tapebasis-state:

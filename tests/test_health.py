@@ -4,8 +4,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from marketdata_mcp import health
-from marketdata_mcp.health import (
+from tapebasis import health
+from tapebasis.health import (
     FINVIZ,
     TRADINGVIEW,
     STATUS_DOWN,
@@ -32,7 +32,7 @@ async def _noop(*_args, **_kwargs):
 def _monitor(tmp_path, probes):
     import os
 
-    os.environ["MARKETDATA_HEALTH_STATE"] = str(tmp_path / "health.json")
+    os.environ["TAPEBASIS_HEALTH_STATE"] = str(tmp_path / "health.json")
     return HealthMonitor(probes)
 
 

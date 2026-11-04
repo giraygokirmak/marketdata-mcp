@@ -4,7 +4,7 @@
 an individual response can degrade to one provider if the other fails. The per-call truth is always
 that response's `data_provider`.
 
-Ask the server for this list at runtime — `marketdata_tool_map()` returns it without any upstream
+Ask the server for this list at runtime — `tapebasis_tool_map()` returns it without any upstream
 call.
 
 ## Dual-source (9)
@@ -165,8 +165,8 @@ Marketaux-only, so it is empty — and says why — without a token.
 
 | Tool | Purpose |
 | --- | --- |
-| `marketdata_health` | Read the cached drift/outage verdict, or `refresh=True` to probe now |
-| `marketdata_tool_map` | Return this catalogue with no upstream call |
+| `tapebasis_health` | Read the cached drift/outage verdict, or `refresh=True` to probe now |
+| `tapebasis_tool_map` | Return this catalogue with no upstream call |
 
 ---
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from marketdata_mcp import sentiment
+from tapebasis import sentiment
 
 
 # ── lexicon behaviour ───────────────────────────────────────────────────────

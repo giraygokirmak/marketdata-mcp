@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from marketdata_mcp.freshness import freshest, parse_market_timestamp
-from marketdata_mcp.reconcile import FINVIZ, TRADINGVIEW, FieldSpec, merge
+from tapebasis.freshness import freshest, parse_market_timestamp
+from tapebasis.reconcile import FINVIZ, TRADINGVIEW, FieldSpec, merge
 
 
 REFERENCE = datetime(2026, 11, 4, 7, 30, tzinfo=timezone.utc)
@@ -200,7 +200,7 @@ def test_winner_missing_a_field_falls_back_to_the_other_side():
 
 def test_notice_claims_newer_print_only_when_it_is_actually_newer():
     """A tie must not be described as 'printed more recently'."""
-    from marketdata_mcp.reconcile import notice_for
+    from tapebasis.reconcile import notice_for
 
     same = "2026-11-03T21:00:00+00:00"
     tied = merge({"price": 1.0}, {"price": 2.0}, _specs(), tv_time=same, fv_time=same)
@@ -216,7 +216,7 @@ def test_notice_does_not_speculate_when_no_timestamp_was_available():
     provider was preferred, when the truth is that freshness never entered the
     decision.
     """
-    from marketdata_mcp.reconcile import notice_for
+    from tapebasis.reconcile import notice_for
 
     merged = merge({"price": 1.0}, {"price": 2.0}, _specs())
     text = notice_for(merged)
@@ -226,7 +226,7 @@ def test_notice_does_not_speculate_when_no_timestamp_was_available():
 
 
 def test_notice_names_the_fresher_provider_when_they_agree():
-    from marketdata_mcp.reconcile import notice_for
+    from tapebasis.reconcile import notice_for
 
     merged = merge(
         {"price": 100.0}, {"price": 100.0}, _specs(),
@@ -247,7 +247,7 @@ def test_finviz_float32_noise_is_rounded_before_it_can_be_displayed():
     This only mattered once a Finviz reading could be the *displayed* price
     (freshness selection), because then the noise reaches a user.
     """
-    from marketdata_mcp.fv_access import _round_floats
+    from tapebasis.fv_access import _round_floats
 
     assert _round_floats({"level": 7568.919921875})["level"] == 7568.92
     assert _round_floats([{"price": 331.8999938964844}])[0]["price"] == 331.9
@@ -255,7 +255,7 @@ def test_finviz_float32_noise_is_rounded_before_it_can_be_displayed():
 
 def test_rounding_keeps_precision_needed_for_greeks_and_percentages():
     """6 significant digits — plenty for a delta, unlike a fixed 2 places."""
-    from marketdata_mcp.fv_access import _round_floats
+    from tapebasis.fv_access import _round_floats
 
     assert _round_floats({"delta": -0.0028611675})["delta"] == -0.00286117
     assert _round_floats({"change_percent": -1.897611728541031})["change_percent"] == -1.89761
@@ -267,7 +267,7 @@ def test_rounding_keeps_precision_needed_for_greeks_and_percentages():
 
 
 def test_rounding_leaves_zero_and_non_finite_values_untouched():
-    from marketdata_mcp.fv_access import _round_floats
+    from tapebasis.fv_access import _round_floats
 
     assert _round_floats({"zero": 0.0})["zero"] == 0.0
     assert _round_floats({"neg_zero": -0.0})["neg_zero"] == 0.0

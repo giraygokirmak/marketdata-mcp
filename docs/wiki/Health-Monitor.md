@@ -37,7 +37,7 @@ a **SHA-256 fingerprint of the payload's key paths** as a baseline:
 }
 ```
 
-Persisted to `~/.marketdata-mcp/health_state.json` (override: `MARKETDATA_HEALTH_STATE`). Later
+Persisted to `~/.tapebasis/health_state.json` (override: `TAPEBASIS_HEALTH_STATE`). Later
 probes compare against it, so a renamed field is caught even though the endpoint still answers 200.
 
 The baseline file matters: without it, the first probe of a shape that already drifted would be
@@ -63,7 +63,7 @@ Drift is surfaced, never swallowed. Every tool response gets:
 ```jsonc
 {
   "data_provider": "BOTH",
-  "notice": "Data came from BOTH providers ... WARNING: the provider health monitor reports an upstream change or outage — see marketdata_health.",
+  "notice": "Data came from BOTH providers ... WARNING: the provider health monitor reports an upstream change or outage — see tapebasis_health.",
   "warnings": ["TRADINGVIEW tradingview.scanner_api: DRIFT — payload shape changed"],
   "degraded": true
 }
@@ -76,19 +76,19 @@ degraded because TradingView drifted.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `MARKETDATA_HEALTH_ENABLED` | `true` | Turn the monitor on/off |
-| `MARKETDATA_HEALTH_INTERVAL` | `300` | Seconds between background probe rounds |
-| `MARKETDATA_HEALTH_TTL` | `60` | Seconds a cached verdict is reused |
+| `TAPEBASIS_HEALTH_ENABLED` | `true` | Turn the monitor on/off |
+| `TAPEBASIS_HEALTH_INTERVAL` | `300` | Seconds between background probe rounds |
+| `TAPEBASIS_HEALTH_TTL` | `60` | Seconds a cached verdict is reused |
 
 The monitor runs in the background; tool calls only read the cached verdict, so **health checking
 never adds latency to a data call**. `/health` also reads the cache — it is cheap enough for a
 container healthcheck to hit every 30 s.
 
-## `marketdata_health`
+## `tapebasis_health`
 
 ```
-marketdata_health()                 # cached verdict
-marketdata_health(refresh=True)     # probe every upstream now
+tapebasis_health()                 # cached verdict
+tapebasis_health(refresh=True)     # probe every upstream now
 ```
 
 Returns per-probe status, message, fingerprint, and whether the result matches the baseline. Use
@@ -101,13 +101,13 @@ baseline is stale and will keep reporting `DRIFT`. Delete the state file and let
 re-baseline:
 
 ```bash
-rm ~/.marketdata-mcp/health_state.json
+rm ~/.tapebasis/health_state.json
 ```
 
-In Docker, the state lives on the `marketdata-state` volume:
+In Docker, the state lives on the `tapebasis-state` volume:
 
 ```bash
-docker compose exec marketdata-mcp rm /home/mcpuser/.marketdata-mcp/state/health_state.json
+docker compose exec tapebasis rm /home/mcpuser/.tapebasis/state/health_state.json
 ```
 
 Only do this when you know the current shape is correct — resetting hides an active drift.

@@ -74,7 +74,7 @@ an already-drifted shape from being adopted as the new normal.
 
 ## 7. Health state is persisted to disk
 
-**Decision:** baselines live in `~/.marketdata-mcp/health_state.json`, volume-mounted in Docker.
+**Decision:** baselines live in `~/.tapebasis/health_state.json`, volume-mounted in Docker.
 
 **Why:** in-memory baselines reset on every restart, so a slow-moving schema change would be adopted
 silently at each restart. Persistence is what makes drift detection cumulative.

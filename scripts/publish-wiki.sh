@@ -5,7 +5,7 @@
 # creates after the *first* page exists. There is no API to create it, so the
 # one-time bootstrap is manual:
 #
-#   1. Open https://github.com/giraygokirmak/marketdata-mcp/wiki
+#   1. Open https://github.com/giraygokirmak/tapebasis/wiki
 #   2. Choose "Create the first page", save anything (this script overwrites it)
 #
 # After that this script is idempotent: it clones, replaces the pages, and
@@ -15,7 +15,7 @@
 # Usage: scripts/publish-wiki.sh [--dry-run]
 set -euo pipefail
 
-REPO="giraygokirmak/marketdata-mcp"
+REPO="giraygokirmak/tapebasis"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs/wiki"
 WORK="$(mktemp -d)"
 DRY_RUN=0
@@ -35,7 +35,7 @@ if ! git clone -q "https://github.com/${REPO}.wiki.git" "$WORK/wiki" 2>/dev/null
 error: the wiki repository does not exist yet.
 
 GitHub creates it only once a first page has been added in the web UI:
-  https://github.com/giraygokirmak/marketdata-mcp/wiki
+  https://github.com/giraygokirmak/tapebasis/wiki
 Choose "Create the first page" and save it — this script overwrites the content.
 EOF
     exit 1
