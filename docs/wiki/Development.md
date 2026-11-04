@@ -119,6 +119,22 @@ Two GitHub Actions workflows:
 | `test.yml` | Install on 3.10–3.13, run `pytest`, smoke-test the tool surface |
 | `publish-image.yml` | Build and publish the Docker image |
 
+## Editing these docs
+
+These pages are authored in [`docs/wiki/`](https://github.com/giraygokirmak/marketdata-mcp/tree/main/docs/wiki)
+in the repository, not in the wiki UI — the repo is the source of truth. After editing, publish:
+
+```bash
+./scripts/publish-wiki.sh           # push docs/wiki/*.md to the wiki repo
+./scripts/publish-wiki.sh --dry-run # show what would change
+```
+
+Links are written wiki-style (`[Architecture](Architecture)`), which renders in both places. Keep it
+that way: a `docs/wiki/X.md` path would break in the wiki, where pages live at the root.
+
+When behaviour changes, update the page that documents it in the same commit. A doc that describes
+the previous contract is worse than no doc, because it reads as authoritative.
+
 ## Related
 
 - [Architecture](Architecture) — why the layers are ordered this way

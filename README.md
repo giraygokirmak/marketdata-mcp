@@ -316,7 +316,19 @@ src/marketdata_mcp/
 
 ## Documentation
 
-The full manual lives in [`docs/wiki/`](docs/wiki/) and is mirrored to the GitHub wiki:
+The full manual lives in [`docs/wiki/`](docs/wiki/) and is mirrored to the
+[GitHub wiki](https://github.com/giraygokirmak/marketdata-mcp/wiki). Pages are authored with
+wiki-style links, so the same files render correctly in both places — `docs/` is the source of
+truth, the wiki is generated from it:
+
+```bash
+./scripts/publish-wiki.sh          # sync docs/wiki/*.md into the wiki
+./scripts/publish-wiki.sh --dry-run
+```
+
+The wiki is a separate git repository that GitHub only creates once a first page exists. That
+bootstrap is the one manual step: open the wiki tab, add any page, then run the script (it
+overwrites the placeholder).
 
 | Page | What it covers |
 | --- | --- |
