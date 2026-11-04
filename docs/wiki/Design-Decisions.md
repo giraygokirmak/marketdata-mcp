@@ -15,7 +15,7 @@ agreed*. A boolean loses the case that matters most: several answered and disagr
 states plus `comparisons`, that case is visible instead of hidden.
 
 **Consequence:** `ALL` means "every provider that was asked answered", not "they agree". Agreement
-lives in `comparisons[].match`. This is documented in three places because it is the single easiest
+lives in `comparisons[].match`. This is documented in several places because it is the single easiest
 thing to misread.
 
 ---
@@ -23,16 +23,16 @@ thing to misread.
 ## 2. `ALL` is coverage, not agreement
 
 **Decision:** `ALL` is set whenever every provider that was asked produced data, including a
-two-of-three response, and `providers_answered` names exactly which providers contributed.
+partial response, and `providers_answered` names exactly which providers contributed.
 
 **Why:** the alternative is either a lie or a combinatoric explosion of labels. If `ALL` required
-three answers, a tool that legitimately asks only two providers (options chains: Finviz + Yahoo)
-could never report complete coverage, and an instrument only two providers carry would look degraded
-on every call. Naming the answering set separately keeps both facts exact: `data_provider` says "you
-got everything asked for", `providers_answered` says what that was.
+every provider in the catalogue to answer, a tool that legitimately asks only some of them (options
+chains: Finviz + Yahoo) could never report complete coverage, and an instrument only some providers
+carry would look degraded on every call. Naming the answering set separately keeps both facts exact:
+`data_provider` says "you got everything asked for", `providers_answered` says what that was.
 
-**Consequence:** an agent that wants to say "three sources agreed" must read `providers_answered`, not
-infer it from `ALL`.
+**Consequence:** an agent that wants to say "several sources agreed" must read `providers_answered`,
+not infer it from `ALL`.
 
 ---
 
@@ -52,7 +52,7 @@ benefit is that a wrong number never becomes invisible.
 **Decision:** resolve each compared field to a single value in `data`, the reading whose market
 print is **newest**, while `comparisons` keeps every raw reading verbatim.
 
-**Why:** an agent should not have to reconcile two or three numbers to answer "what is the price". But
+**Why:** an agent should not have to reconcile several numbers to answer "what is the price". But
 it must be able to *audit* that choice, which requires the losers to remain one field away.
 
 **Why freshness, not a fixed provider:** preferring one provider unconditionally is arbitrary. During
@@ -148,7 +148,7 @@ wrong answer, not a bad ticker.
 
 ---
 
-## 10. Three independent legs, no proxying
+## 10. Multiple independent legs, no proxying
 
 **Decision:** TradingView, Finviz and Yahoo each hit genuinely different upstreams through their own
 access module.

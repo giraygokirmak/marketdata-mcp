@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="tbTitle tbDesc">
   <title id="tbTitle">Tapebasis mark</title>
-  <desc id="tbDesc">Two ticker tapes, one cool and one warm, cross on a single marked print: the basis between two feeds is zero.</desc>
+  <desc id="tbDesc">Ticker tapes, one cool and one warm, cross on a single marked print: the basis between feeds is zero.</desc>
 
   <defs>
     <linearGradient id="tbBg" x1="0" y1="0" x2="1" y2="1">

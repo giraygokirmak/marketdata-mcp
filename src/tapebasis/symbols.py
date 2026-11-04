@@ -1,6 +1,6 @@
-"""Dynamic symbol resolution across three providers.
+"""Dynamic symbol resolution across providers.
 
-The three upstreams name the same instrument differently, and the differences
+The upstreams name the same instrument differently, and the differences
 are not mechanical:
 
 ============  ==================  ===========  ===============
@@ -631,7 +631,7 @@ async def resolve(
 
 
 async def resolve_all(query: str, *, asset_class: str = "") -> dict[str, Resolution]:
-    """Resolve the same query for all three providers concurrently."""
+    """Resolve the same query for every provider concurrently."""
     results = await asyncio.gather(
         resolve(query, "TRADINGVIEW", asset_class=asset_class),
         resolve(query, "FINVIZ", asset_class=asset_class),

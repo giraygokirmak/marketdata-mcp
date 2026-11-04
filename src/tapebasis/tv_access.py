@@ -1,7 +1,7 @@
 """Thin, typed access to TradingView's own data.
 
 Every function here goes to TradingView. Nothing in this module delegates to
-Yahoo Finance or Finviz, the point of a third provider is that each leg is
+Yahoo Finance or Finviz: the point of a separate provider is that each leg is
 genuinely independent, and a leg that quietly proxies another one is worth
 nothing as a cross-check.
 

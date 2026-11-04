@@ -72,7 +72,7 @@ async def test_quote_all_when_every_provider_answers(fake_providers):
 
 @pytest.mark.asyncio
 async def test_all_is_reported_for_two_of_three(fake_providers):
-    """Coverage means every provider *asked* answered, not all three existing."""
+    """Coverage means every provider *asked* answered, not that all of them exist."""
     fake_providers["yh"] = RuntimeError("yahoo outage")
     result = await tools_market.stock_quote("AAPL")
     assert result["data_provider"] == "ALL"

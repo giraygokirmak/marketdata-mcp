@@ -112,10 +112,10 @@ from TradingView's calendar). The two are not the same fact and are never confla
 
 ### `stock_extended_hours`
 
-Pre-/post-market price from three independent sources: TradingView's `premarket_*`/`postmarket_*`
-scanner columns, Finviz's after-hours print, and Yahoo's 1-minute extended-hours candles. The
-after-hours reading is compared at 0.5 %; each provider's raw reading stays in
-`after_hours_readings`.
+Pre-/post-market price from every independent source that publishes one: TradingView's
+`premarket_*`/`postmarket_*` scanner columns, Finviz's after-hours print, and Yahoo's 1-minute
+extended-hours candles. The after-hours reading is compared at 0.5 %; each provider's raw reading
+stays in `after_hours_readings`.
 
 ### `technical_analysis`
 
@@ -152,7 +152,7 @@ For a cross-checked *index* read, use `market_indices`.
 ### `combined_analysis`
 
 TradingView technical read + sentiment + news, with the underlying price cross-checked against
-Finviz's snapshot and Yahoo's chart API. One request, not three.
+Finviz's snapshot and Yahoo's chart API. One request, not one per leg.
 
 The price leg is genuinely multi-source; the analysis and sentiment legs remain single-source and are
 labelled per field in `fields`. `sentiment_source` states whether the sentiment came from Marketaux or
@@ -168,7 +168,7 @@ those legs are marked `NOT_ATTEMPTED`, which is **not** an error and is excluded
 | Tool | Capability | Notes |
 | --- | --- | --- |
 | `stock_filings` | SEC filing history | Finviz's SEC feed |
-| `stock_ownership` | Insider + institutional ownership, short interest | Three datasets; a failing one is reported without losing the others |
+| `stock_ownership` | Insider + institutional ownership, short interest | Several datasets; a failing one is reported without losing the others |
 | `stock_peers` | Peer-group companies | No provider has a curated peer list |
 | `stock_why_moving` | Narrative explainer for a price move | Finviz editorial feed |
 | `stock_chart` | Rendered PNG candlestick chart | TradingView produces text analysis, not images |

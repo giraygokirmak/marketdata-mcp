@@ -71,7 +71,7 @@ src/tapebasis/
 
 ## Why the layering looks like this
 
-### Three independent legs, no proxying
+### Multiple independent legs, no proxying
 
 Cross-verification is only meaningful if the sources are independent. So each provider has its own
 access module and its own upstream:
@@ -160,7 +160,7 @@ or a wrong ordering.
 
 ### `ratelimit.py` is one gate per upstream
 
-All three upstreams are undocumented and rate-limited by their owners. Each gets a `ProviderLimiter`
+Every upstream is undocumented and rate-limited by its owner. Each gets a `ProviderLimiter`
 with a minimum interval, a concurrency cap, a shared exponential cooldown and a short TTL cache.
 Raising retry counts would deepen a block; pacing and a process-wide cooldown are what actually
 recover.
@@ -190,7 +190,7 @@ capabilities before spending upstream requests.
 async def ask(tv_fn, fv_fn, yh_fn) -> Pair
 ```
 
-- All three coroutines run concurrently via `asyncio.gather`.
+- The provider coroutines run concurrently via `asyncio.gather`.
 - A `None` callable is not a failure: it becomes `NOT_ATTEMPTED` ("this provider has no such
   capability"), which is excluded from `errors`.
 - Any exception is caught and converted. `ask` **never** raises.

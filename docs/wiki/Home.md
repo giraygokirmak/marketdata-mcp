@@ -2,17 +2,17 @@
 
 <img src="https://raw.githubusercontent.com/giraygokirmak/tapebasis/main/docs/logo.svg" alt="Tapebasis" width="300">
 
-**Three tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
+**Multiple tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
 market data together, cross-checks every overlapping figure, and labels each response with the
 provider that actually produced it.
 
 *Basis* is the finance term for the price difference between two markets quoting the same asset.
-*Tape* is the ticker tape. Tapebasis is the spread between three feeds, measured on every call.
+*Tape* is the ticker tape. Tapebasis is the spread between multiple feeds, measured on every call.
 
 The point is redundancy you can *see*. Every provider that could answer a field is asked, natively
 and in parallel. When several answer, the data is cross-checked. When only one answers, you get the
 data, clearly marked as single-source. When none answers, you get `NONE` instead of a
-plausible-looking number. And because all three providers scrape or call undocumented upstreams, a
+plausible-looking number. And because every provider scrapes or calls an undocumented upstream, a
 background monitor probes every endpoint and reports API/schema drift inside ordinary tool responses.
 
 Each leg is genuinely independent: TradingView's own scanner and chart websocket, Finviz's HTML and
@@ -106,8 +106,8 @@ reading whose market print is newest. Ties are broken by the documented default 
 `freshness.decision` states which rule applied.
 
 **`ALL` does not mean "the values agree".** It means every provider asked answered. Agreement is a
-separate axis, reported per field in `comparisons[].match` and summarised in `notice`/`warnings`. Two
-of three providers answering is still `ALL`; `providers_answered` names which ones.
+separate axis, reported per field in `comparisons[].match` and summarised in `notice`/`warnings`. A
+subset of providers answering is still `ALL`; `providers_answered` names which ones.
 
 **Disagreements are never silently resolved.** If the providers report different prices, all values
 stay in `comparisons`, the field is named in `notice` and `warnings`, and `data_provider` stays `ALL`.

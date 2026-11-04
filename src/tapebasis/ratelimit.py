@@ -156,7 +156,7 @@ LIMITERS: dict[str, ProviderLimiter] = {
     ),
     "YAHOO": ProviderLimiter(
         provider="YAHOO",
-        # Yahoo is the most short-tempered of the three.
+        # Yahoo is the most short-tempered of the providers.
         min_interval=_env_float("TAPEBASIS_YAHOO_MIN_INTERVAL", 1.0),
         max_inflight=_env_int("TAPEBASIS_YAHOO_MAX_INFLIGHT", 1),
         max_retries=_env_int("TAPEBASIS_YAHOO_MAX_RETRIES", 2),

@@ -19,10 +19,10 @@ Every tool returns the same envelope. Learn it once and every tool is readable.
 separate axis, reported per field in `comparisons[].match` and summarised in `notice`/`warnings`.
 Providers answering but diverging is still `ALL`, with the conflict named.
 
-**`ALL` does not mean all three.** A tool asks only the providers that could serve the field. If
-TradingView and Yahoo answer and Finviz has no page for the instrument, that response is `ALL`:
-every provider *asked* answered. `providers_answered` lists exactly which ones contributed, so
-coverage can be read precisely.
+**`ALL` does not mean every provider in the catalogue.** A tool asks only the providers that could
+serve the field. If TradingView and Yahoo answer and Finviz has no page for the instrument, that
+response is `ALL`: every provider *asked* answered. `providers_answered` lists exactly which ones
+contributed, so coverage can be read precisely.
 
 ## Fields
 
@@ -35,7 +35,7 @@ response.
 
 ### `providers_answered`
 The provider labels that actually produced data for this response, in display order. Use this, not
-`data_provider` alone, to state coverage precisely ("three sources agreed" vs "two of three").
+`data_provider` alone, to state coverage precisely ("all sources agreed" vs "only some answered").
 
 ### `notice`
 One sentence, written to be relayed verbatim to a user. It always names the provider state. When
@@ -230,7 +230,7 @@ Fields marked session-relative (`change_percent`, `previous_close`, `volume`) al
 than as a disagreement. The price itself is still compared, because a price stays comparable across
 minutes while a session baseline does not.
 
-## A worked three-provider response
+## A worked multi-provider response
 
 ```jsonc
 {
@@ -254,8 +254,8 @@ minutes while a session baseline does not.
 }
 ```
 
-Read it as: *all three answered. Their prices agree within 0.13 %, so the price shown is a
-three-way-corroborated reading. Finviz is mid-session while the others are at the prior close, so the
+Read it as: *every provider asked answered. Their prices agree within 0.13 %, so the price shown is a
+corroborated reading. Finviz is mid-session while the others are at the prior close, so the
 day-change figures were not compared, and the response says so rather than pretending they conflicted
 or that they agreed.*
 

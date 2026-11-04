@@ -22,7 +22,7 @@ Every setting is optional. Defaults are chosen so a bare `pip install` works.
 
 See [Health Monitor](Health-Monitor).
 
-## Rate limiting (all three providers)
+## Rate limiting (every provider)
 
 Every upstream is undocumented and rate-limited by its owner, so **every** request (TradingView
 scanner, TradingView chart websocket, Finviz HTML/JSON, Yahoo chart API) passes through a
@@ -40,7 +40,7 @@ per-provider limiter ([`ratelimit.py`](https://github.com/giraygokirmak/tapebasi
 | `TAPEBASIS_YAHOO_MAX_INFLIGHT` | `1` | Max concurrent Yahoo requests |
 | `TAPEBASIS_YAHOO_MAX_RETRIES` | `2` | Retries per Yahoo request |
 
-Three behaviours are not configurable, because they are safety properties rather than tuning knobs:
+Some behaviours are not configurable, because they are safety properties rather than tuning knobs:
 
 - **A shared, exponential cooldown.** After a `429` (or a websocket `invalid symbol` / `resolve
   error`), the provider is paused for the whole process: 5 s, doubling to a 120 s ceiling, with
@@ -105,7 +105,7 @@ Neither is required. Without a token, sentiment is scored locally from Finviz he
 
 ## No proxy configuration
 
-There is deliberately **no proxy support**. All three providers reach their upstreams directly. If
+There is deliberately **no proxy support**. Every provider reaches its upstream directly. If
 you need egress control, do it at the network or container level.
 
 ## Example `.env`

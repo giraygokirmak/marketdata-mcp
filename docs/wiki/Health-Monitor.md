@@ -1,6 +1,6 @@
 # Health Monitor
 
-All three providers depend on things that can move without notice: Finviz's HTML class names and
+Every provider depends on things that can move without notice: Finviz's HTML class names and
 unversioned `/api/*` JSON islands, TradingView's scanner POST schema and chart websocket protocol,
 and Yahoo's chart API shape.
 

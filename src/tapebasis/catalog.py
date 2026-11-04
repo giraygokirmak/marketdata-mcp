@@ -59,7 +59,7 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "name": "market_indices",
         "capability": "S&P 500, Dow, Nasdaq Composite, Russell 2000, VIX levels",
         "providers": "ALL",
-        "comparison": "index level (0.5% tolerance) across all three providers",
+        "comparison": "index level (0.5% tolerance) across every provider",
         "notes": (
             "TradingView SP:SPX / DJ:DJI / NASDAQ:IXIC / TVC:RUT / TVC:VIX, Finviz "
             "DJI/SPX/COMP and Yahoo ^GSPC/^DJI/^IXIC/^RUT/^VIX are mapped to one canonical "
@@ -111,7 +111,7 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "notes": (
             "TradingView's scanner exposes premarket_close / postmarket_close fields, Finviz "
             "the after-hours print on the quote page, and Yahoo full session windows from "
-            "1-minute candles. All three readings stay in `after_hours_readings`."
+            "1-minute candles. Every reading stays in `after_hours_readings`."
         ),
     },
     {
@@ -138,7 +138,7 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "providers": "FINVIZ",
         "comparison": "single-source",
         "notes": (
-            "Combines three Finviz datasets; a failing dataset is reported in errors "
+            "Combines several Finviz datasets; a failing dataset is reported in errors "
             "and warnings without losing the others."
         ),
     },

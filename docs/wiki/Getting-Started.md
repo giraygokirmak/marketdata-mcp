@@ -116,10 +116,10 @@ tapebasis_tool_map()           # what is multi-sourced, before calling anything
 
 Five things to notice:
 
-1. `data_provider` is `ALL` and `providers_answered` names all three: every provider asked answered.
+1. `data_provider` is `ALL` and `providers_answered` names every provider that answered.
 2. `data.price` is **one** number. `freshness` explains where it came from: Finviz printed at
-   `10:42Z`, TradingView at `00:59:53Z`, Yahoo at `21:00:01Z`, so the newest reading won. All three
-   raw prices are still in `comparisons`.
+   `10:42Z`, TradingView at `00:59:53Z`, Yahoo at `21:00:01Z`, so the newest reading won. Every raw
+   price is still in `comparisons`.
 3. `fields` shows `peers` came from Finviz alone. Per-field provenance, not a blanket claim.
 4. The `warnings` entry is not an error: Finviz is mid-session while the others are at the prior
    close, so the session-relative fields (day change, previous close, volume) were **not** compared.

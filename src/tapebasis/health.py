@@ -1,6 +1,6 @@
 """Upstream health and schema-drift monitor.
 
-All three providers scrape or call undocumented upstreams (finviz.com's HTML
+Every provider scrapes or calls an undocumented upstream (finviz.com's HTML
 and unversioned JSON islands, TradingView's scanner and symbol search, Yahoo's
 chart API). Any of them can change a path, a JSON key or a status code without
 notice. When that happens, tools start failing or silently returning zeros.

@@ -2,7 +2,7 @@
 
 <img src="docs/logo.svg" alt="Tapebasis" width="360">
 
-**Three tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
+**Multiple tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
 market data together, cross-checks every overlapping figure, and labels each response with the
 provider that actually produced it.
 
@@ -11,13 +11,13 @@ provider that actually produced it.
 ---
 
 *Basis* is the finance term for the price difference between two markets quoting the same asset.
-*Tape* is the ticker tape. Tapebasis is the spread between three feeds, measured on every call:
+*Tape* is the ticker tape. Tapebasis is the spread between multiple feeds, measured on every call:
 zero when they agree, reported when they don't.
 
 The point is redundancy you can *see*. Every provider that could answer a field is asked, natively
 in parallel. When several answer, the data is cross-checked. When only one answers, you get the data,
 clearly marked as single-source. When none answers, you get `NONE` instead of a
-plausible-looking number. And because all three providers scrape or call undocumented upstreams, a
+plausible-looking number. And because every provider scrapes or calls an undocumented upstream, a
 background monitor probes every endpoint and reports API/schema drift inside ordinary tool responses.
 
 Each provider is genuinely independent: TradingView's own scanner and chart websocket, Finviz's HTML
@@ -43,7 +43,7 @@ Every tool result carries exactly one of five values. It states **coverage**, ne
 | `NONE`        | No provider could supply it. No value is presented.                        |
 
 `ALL` means "every provider asked answered", not "they agree". Agreement is a separate axis, and it
-lives in `comparisons[].match`. A two-of-three response is still `ALL`; `providers_answered` names
+lives in `comparisons[].match`. A partial response is still `ALL`; `providers_answered` names
 exactly which providers contributed.
 
 The same envelope also contains:
@@ -139,19 +139,19 @@ response is `TRADINGVIEW` / `SINGLE_SOURCE`, served and clearly labelled, not hi
 
 | Tool | Providers | Fields cross-checked |
 | --- | --- | --- |
-| `stock_quote` | all three | price, change %, previous close, 52-w high/low, P/E, RSI(14), volume |
-| `stock_prices` | all three | price and change % per ticker (per-row `data_provider`) |
+| `stock_quote` | all | price, change %, previous close, 52-w high/low, P/E, RSI(14), volume |
+| `stock_prices` | all | price and change % per ticker (per-row `data_provider`) |
 | `stock_screener` | TradingView + Finviz | per-row price for the tickers both return |
-| `market_indices` | all three | S&P 500, Dow, Nasdaq Composite, Russell 2000, VIX levels |
+| `market_indices` | all | S&P 500, Dow, Nasdaq Composite, Russell 2000, VIX levels |
 | `stock_options_chain` | Finviz + Yahoo (+ TV underlying) | volume per contract, matched by strike; OI when both report it |
-| `stock_earnings` | all three | next release date; EPS history |
-| `stock_extended_hours` | all three | after-hours / pre-market price |
-| `technical_analysis` | all three | price, RSI(14), ATR(14), volume |
-| `stock_news` | all three | headline title overlap between the feeds |
+| `stock_earnings` | all | next release date; EPS history |
+| `stock_extended_hours` | all | after-hours / pre-market price |
+| `technical_analysis` | all | price, RSI(14), ATR(14), volume |
+| `stock_news` | all | headline title overlap between the feeds |
 | `stock_backtest` | TradingView + Yahoo | strategy metrics run twice on two independent OHLCV feeds |
 | `stock_backtest_compare` | TradingView + Yahoo | same, plus whether both feeds pick the same winning strategy |
 | `market_snapshot` | TradingView + Yahoo | indices, major crypto, FX pairs, ETFs |
-| `combined_analysis` | all three | underlying price |
+| `combined_analysis` | all | underlying price |
 
 `stock_news`'s TradingView leg is the provider's licensed Marketaux feed and needs
 `MARKETAUX_API_TOKEN`; without it that leg is `NOT_ATTEMPTED` and the response reports the feeds that
@@ -250,7 +250,7 @@ useful.
 
 ## Upstream change detection
 
-All three providers depend on things that can move without notice: Finviz's HTML class names and
+Every provider depends on things that can move without notice: Finviz's HTML class names and
 unversioned `/api/*` JSON islands, TradingView's scanner POST schema and chart websocket protocol,
 and Yahoo's chart API shape.
 

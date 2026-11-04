@@ -1,4 +1,4 @@
-"""tapebasis: one MCP server, three market-data providers, cross-verified.
+"""tapebasis: one MCP server, multiple market-data providers, cross-verified.
 
 The server fans every overlapping request out to every upstream provider that
 can serve it (TradingView, Finviz and Yahoo Finance), compares the answers, and

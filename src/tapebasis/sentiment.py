@@ -215,7 +215,7 @@ def score_headlines(
     """Aggregate local sentiment over provider headlines.
 
     The output shape deliberately mirrors the Marketaux path
-    (``sentiment_score``, ``sentiment_label``, ``posts_analyzed``, the three
+    (``sentiment_score``, ``sentiment_label``, ``posts_analyzed``, the per-label
     counts and ``top_posts``) so a caller does not have to branch on which
     backend produced it. ``scoring`` is the one field that differs, and it
     always states that the score is computed locally.

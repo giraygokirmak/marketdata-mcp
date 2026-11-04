@@ -1,4 +1,4 @@
-"""tapebasis, one MCP server that cross-checks three market-data providers.
+"""tapebasis, one MCP server that cross-checks multiple market-data providers.
 
 Run over stdio (default) or streamable HTTP::
 
@@ -25,9 +25,9 @@ from .providers_state import PROVIDER_MEANING
 logger = logging.getLogger("tapebasis")
 
 INSTRUCTIONS = (
-    "Market data from THREE independent providers (TradingView, Finviz and Yahoo "
-    "Finance), each fetched natively. Every tool result includes `data_provider`, one "
-    "of ALL, TRADINGVIEW, FINVIZ, YAHOO or NONE.\n\n"
+    "Market data from multiple independent providers (currently TradingView, "
+    "Finviz and Yahoo Finance), each fetched natively. Every tool result includes "
+    "`data_provider`, one of ALL, TRADINGVIEW, FINVIZ, YAHOO or NONE.\n\n"
     "HOW TO READ IT:\n"
     "- ALL: every provider that was asked answered. This is COVERAGE, not agreement. "
     "Check `comparisons` for whether the readings match, and `providers_answered` for "

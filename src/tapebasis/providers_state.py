@@ -5,7 +5,7 @@ The first-class field is ``data_provider``: an LLM reading the tool result
 must always be able to tell which provider(s) actually supplied the numbers it
 is about to quote.
 
-Three providers are first-class peers:
+Providers are first-class peers:
 
 ``TRADINGVIEW``  TradingView's scanner and chart websocket.
 ``FINVIZ``       finviz.com HTML and JSON islands.
@@ -224,7 +224,7 @@ def provider_from_answered(answered: Iterable[str]) -> DataProvider:
     """Map the set of providers that answered onto a :class:`DataProvider`.
 
     ``ALL`` is coverage: it means every provider that was *asked* answered.
-    Callers that ask all three pass all three labels here.
+    Callers pass every label that answered here.
     """
     present = {str(p).upper() for p in answered if p}
     if not present:

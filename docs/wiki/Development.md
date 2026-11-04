@@ -28,7 +28,7 @@ Finviz page would fail for reasons unrelated to the code.
 
 | File | Covers |
 | --- | --- |
-| `test_reconcile.py` | Fan-out, three-way comparison, tolerances, precedence, notice text |
+| `test_reconcile.py` | Fan-out, multi-provider comparison, tolerances, precedence, notice text |
 | `test_tools_merge.py` | End-to-end tool contract with faked providers (`ALL` vs single-source, `not_comparable`) |
 | `test_upstream_contract.py` | Regression tests for every upstream behaviour found by live probing (see below) |
 | `test_shapers.py` | Pure payload shapers |
@@ -95,7 +95,7 @@ src/tapebasis/
    field, plus a tolerance. Mark session-relative fields with `max_skew_seconds`.
 5. **Write the tool** in `tools_market.py` using `ask(tv, fv, yh)` + `finalize()`.
 6. **Register it** in `_TOOLS` and in `catalog.py` with the real provider set.
-7. **Test** with faked providers: all-answer, two-of-three, one-answers, all-fail, a disagreement, and
+7. **Test** with faked providers: all-answer, partial, one-answers, all-fail, a disagreement, and
    a session-skew case.
 
 ### Choosing a tolerance

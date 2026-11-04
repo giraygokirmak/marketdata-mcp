@@ -87,7 +87,7 @@ async def stock_filings(
 async def stock_ownership(symbol: str, limit: int = 40) -> dict[str, Any]:
     """Insider trades, institutional holders and short interest (Finviz-only).
 
-    Combines three Finviz datasets that no other provider here offers:
+    Combines several Finviz datasets that no other provider here offers:
     Form-4 insider transactions with monthly buy/sell aggregates, institutional
     positions, and FINRA short-interest history.
 

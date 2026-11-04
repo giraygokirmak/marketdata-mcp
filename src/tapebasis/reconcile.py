@@ -565,7 +565,7 @@ def merge_many(
 
     Agreement is a separate axis. A field the providers disagree on is listed in
     ``mismatches`` and named in the notice; it is still resolved to one value,
-    because a response with three prices for one instrument is a worse answer
+    because a response with several prices for one instrument is a worse answer
     than one price plus a stated conflict.
     """
     present = {p: v for p, v in payloads.items() if v is not None}
@@ -654,7 +654,7 @@ def merge(
     yh_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     yahoo_time: Any = None,
 ) -> Merged:
-    """Two- or three-provider :func:`merge_many`."""
+    """Partial :func:`merge_many`, for calls where some providers were not asked."""
     return merge_many(
         {TRADINGVIEW: tv_payload, FINVIZ: fv_payload, YAHOO: yahoo_payload},
         specs,

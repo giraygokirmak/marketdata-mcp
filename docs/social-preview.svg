@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-labelledby="ogTitle ogDesc">
   <title id="ogTitle">Tapebasis, cross-checked market data for AI agents</title>
-  <desc id="ogDesc">TradingView and Finviz served together, every overlapping figure cross-checked and labelled BOTH, TRADINGVIEW, FINVIZ or NONE.</desc>
+  <desc id="ogDesc">TradingView, Finviz and Yahoo Finance served together, every overlapping figure cross-checked and labelled ALL, TRADINGVIEW, FINVIZ, YAHOO or NONE.</desc>
 
   <defs>
     <linearGradient id="ogBg" x1="0" y1="0" x2="1" y2="1">
@@ -71,26 +71,29 @@
         font-size="92" font-weight="700" fill="#f1f5f9" letter-spacing="-2.5">tapebasis</text>
 
   <text x="602" y="316" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
-        font-size="30" font-weight="500" fill="url(#ogAccent)" letter-spacing="0.2">two tapes, one basis</text>
+        font-size="30" font-weight="500" fill="url(#ogAccent)" letter-spacing="0.2">multiple tapes, one basis</text>
 
   <text x="602" y="386" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
-        font-size="24" fill="#94a3b8">TradingView + Finviz served together,</text>
+        font-size="24" fill="#94a3b8">TradingView + Finviz + Yahoo served together,</text>
   <text x="602" y="422" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
         font-size="24" fill="#94a3b8">every overlapping figure cross-checked.</text>
 
   <!-- The contract, as chips -->
-  <g font-family="'SFMono-Regular', Consolas, Menlo, monospace" font-size="19" font-weight="600">
-    <rect x="602" y="466" width="118" height="42" rx="21" fill="#0f2a26" stroke="#2dd4bf" stroke-opacity="0.55"/>
-    <text x="661" y="494" fill="#5eead4" text-anchor="middle">BOTH</text>
+  <g font-family="'SFMono-Regular', Consolas, Menlo, monospace" font-size="17" font-weight="600">
+    <rect x="602" y="466" width="78" height="42" rx="21" fill="#0f2a26" stroke="#2dd4bf" stroke-opacity="0.55"/>
+    <text x="641" y="493" fill="#5eead4" text-anchor="middle">ALL</text>
 
-    <rect x="732" y="466" width="176" height="42" rx="21" fill="#0d1b30" stroke="#38bdf8" stroke-opacity="0.45"/>
-    <text x="820" y="494" fill="#7dd3fc" text-anchor="middle">TRADINGVIEW</text>
+    <rect x="690" y="466" width="158" height="42" rx="21" fill="#0d1b30" stroke="#38bdf8" stroke-opacity="0.45"/>
+    <text x="769" y="493" fill="#7dd3fc" text-anchor="middle">TRADINGVIEW</text>
 
-    <rect x="920" y="466" width="132" height="42" rx="21" fill="#2a1e0c" stroke="#fbbf24" stroke-opacity="0.45"/>
-    <text x="986" y="494" fill="#fcd34d" text-anchor="middle">FINVIZ</text>
+    <rect x="858" y="466" width="118" height="42" rx="21" fill="#2a1e0c" stroke="#fbbf24" stroke-opacity="0.45"/>
+    <text x="917" y="493" fill="#fcd34d" text-anchor="middle">FINVIZ</text>
 
-    <rect x="1064" y="466" width="118" height="42" rx="21" fill="#1a1f2b" stroke="#64748b" stroke-opacity="0.5"/>
-    <text x="1123" y="494" fill="#94a3b8" text-anchor="middle">NONE</text>
+    <rect x="986" y="466" width="108" height="42" rx="21" fill="#1b1730" stroke="#a78bfa" stroke-opacity="0.45"/>
+    <text x="1040" y="493" fill="#c4b5fd" text-anchor="middle">YAHOO</text>
+
+    <rect x="1104" y="466" width="92" height="42" rx="21" fill="#1a1f2b" stroke="#64748b" stroke-opacity="0.5"/>
+    <text x="1150" y="493" fill="#94a3b8" text-anchor="middle">NONE</text>
   </g>
 
   <text x="602" y="556" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"

@@ -61,7 +61,7 @@ def test_provider_from_answered(answered, expected):
 
 
 def test_all_means_coverage_not_agreement():
-    """Two of three answering is still ALL; it says nothing about agreement."""
+    """A subset answering is still ALL; it says nothing about agreement."""
     assert provider_from_answered(["FINVIZ", "YAHOO"]) is DataProvider.ALL
     assert provider_from_answered(["FINVIZ"]) is DataProvider.FINVIZ
 

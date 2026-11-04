@@ -1,7 +1,7 @@
 """Thin, typed access to the Yahoo Finance chart API.
 
 Yahoo is a first-class provider here, not a fallback hidden inside another one.
-It is the only one of the three that will quote a spot gold pair with a single
+It is the only provider here that will quote a spot gold pair with a single
 unambiguous ticker (``XAUUSD=X``), and its history endpoint is stable and
 documented by a decade of use.
 

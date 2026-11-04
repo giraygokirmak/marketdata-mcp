@@ -78,7 +78,7 @@ is diagnosable without being an error (falling back is normal when no token is c
 
 Setting `MARKETAUX_API_TOKEN` upgrades both news and sentiment:
 
-- `stock_news` gains a third feed: licensed article text, publishers and real URLs.
+- `stock_news` gains another feed: licensed article text, publishers and real URLs.
 - `market_sentiment` uses Marketaux's own entity sentiment scores instead of local scoring.
 
 Free plan: 100 requests/day, 3 articles per request. The service enforces a hard daily budget
@@ -92,7 +92,7 @@ Because the free plan returns only 3 articles per request, `stock_news(limit=20)
 capped at 3 headlines on the Marketaux leg. That is a plan limit, not a bug; local scoring over
 Finviz headlines has no such cap.
 
-Marketaux is subject to the same outgoing-request discipline as the three price providers
+Marketaux is subject to the same outgoing-request discipline as the price providers
 ([`ratelimit.py`](https://github.com/giraygokirmak/tapebasis/blob/main/src/tapebasis/ratelimit.py)),
 plus the daily budget, because its quota is the binding constraint rather than its rate limit.
 

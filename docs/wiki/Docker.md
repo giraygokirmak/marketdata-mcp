@@ -146,7 +146,7 @@ shape. Check `docker compose logs` and then [Troubleshooting](Troubleshooting).
 
 ## Notes
 
-- **No proxy support** is built in. All three providers reach their upstreams directly. Use
+- **No proxy support** is built in. Every provider reaches its upstream directly. Use
   network-level egress control if you need it.
 - The image has no authentication. Do not expose port 6013 to the public internet without a reverse
   proxy that adds auth.

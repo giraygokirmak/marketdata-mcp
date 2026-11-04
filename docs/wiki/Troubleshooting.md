@@ -23,7 +23,7 @@ A single-source response is **not** a failure. The data is served and labelled; 
 not corroborated.
 
 **Also check `providers_answered`.** `ALL` means every provider that was asked answered, which can be
-two out of three. If a provider is missing from that list and there is no matching `errors` entry,
+only some of them. If a provider is missing from that list and there is no matching `errors` entry,
 look for `NOT_ATTEMPTED`: the provider does not carry the instrument at all, and `resolutions` says
 why.
 
@@ -33,7 +33,7 @@ why.
 
 **Cause:** no provider answered.
 
-1. Check `errors`: usually two or three entries.
+1. Check `errors`: usually several entries.
 2. Run `tapebasis_health(refresh=True)`.
 3. Most common root cause is a lost network path or DNS, not the code.
 4. For an unknown symbol: `NO_DATA` from every provider is correct behaviour, not an outage.
@@ -101,7 +101,7 @@ like-for-like day change, compare providers whose `freshness` timestamps are wit
 the fundamentals snapshot, company profile, peers and after-hours print exist only on Finviz.
 
 `fields` exists precisely for this. `data_provider: ALL` means every provider that was asked answered
-for this call, not that every field was covered three times. Per-field truth is in `fields`.
+for this call, not that every field was covered by every provider. Per-field truth is in `fields`.
 
 ---
 
@@ -170,7 +170,7 @@ Tuning: lower `FINVIZ_TIMEOUT` to fail faster, at the cost of losing slow-but-va
 1. Call `tapebasis_health()` and read `rate_limits`. A positive `cooling_down_s` means that provider is
    in its post-`429` pause right now, and a rising `block_streak` means it has been blocked repeatedly.
 2. Let it decay (5 s doubling to 120 s, with jitter). A fan-out over many tickers can trip it.
-3. If it recurs, raise `TAPEBASIS_YAHOO_MIN_INTERVAL` first: Yahoo is the most sensitive of the three.
+3. If it recurs, raise `TAPEBASIS_YAHOO_MIN_INTERVAL` first: Yahoo is the most sensitive provider.
 4. TradingView's websocket reports a block as `invalid symbol` / `resolve error`. Those are treated as
    rate limiting, so a burst does not permanently poison the symbol-resolution cache.
 

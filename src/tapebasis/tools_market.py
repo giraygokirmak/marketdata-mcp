@@ -75,7 +75,7 @@ def _resolution_block(*results) -> dict[str, Any]:
 
 
 async def _symbols_for(symbol: str) -> dict[str, Any]:
-    """Resolve one user symbol into a ticker for each of the three providers."""
+    """Resolve one user symbol into a ticker for each provider."""
     ticker = strip_exchange(symbol).upper()
     if ":" in symbol:
         ticker = symbol.strip().upper()
@@ -98,7 +98,7 @@ async def _symbols_for(symbol: str) -> dict[str, Any]:
 def _quote_specs() -> tuple[FieldSpec, ...]:
     """Fields every provider is asked for, and the tolerance for each.
 
-    Every spec carries all three getters. A missing getter would silently
+    Every spec carries a getter for every provider. A missing getter would silently
     exclude that provider from the comparison, which would make an
     ``ALL`` label claim coverage the comparison never actually checked.
     """
@@ -176,7 +176,7 @@ def _quote_specs() -> tuple[FieldSpec, ...]:
 
 
 async def stock_quote(symbol: str) -> dict[str, Any]:
-    """Quote and fundamentals for one instrument, asked of three providers.
+    """Quote and fundamentals for one instrument, asked of every capable provider.
 
     Each provider is asked independently and natively: TradingView's scanner,
     Finviz's quote page, Yahoo's chart API. Nothing proxies another, so the
@@ -307,7 +307,7 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
 
 
 async def stock_prices(tickers: str) -> dict[str, Any]:
-    """Prices for several instruments at once, from three providers.
+    """Prices for several instruments at once, from every provider that carries them.
 
     Each ticker is resolved per provider and looked up natively: TradingView's
     scanner, Finviz's screener, Yahoo's chart API. The per-row ``data_provider``
@@ -696,7 +696,7 @@ async def stock_screener(
 
 
 async def market_indices() -> dict[str, Any]:
-    """Level and day change for the major US indices, asked of three providers.
+    """Level and day change for the major US indices, asked of every capable provider.
 
     Covers S&P 500, Dow, Nasdaq Composite, Russell 2000 and VIX. Every provider
     spells these differently (``SPX`` / ``SP:SPX`` / ``^GSPC``); they are mapped
