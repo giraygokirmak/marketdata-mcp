@@ -45,6 +45,8 @@ def tv_quote():
         "price_source": "quote",
         "quote_stale": False,
         "source": "Yahoo Finance",
+        # regularMarketTime for the 2026-11-03 US close.
+        "market_time": "2026-11-03T21:00:01+00:00",
     }
 
 
@@ -60,6 +62,7 @@ def fv_quote():
         "last_close": {
             "label": "Last Close",
             "price": 331.9,
+            "date": "Nov 03 • 3:59 PM ET",
             "change": -6.42,
             "change_percent": -1.9,
         },

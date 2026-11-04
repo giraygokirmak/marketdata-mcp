@@ -129,6 +129,25 @@ def _format_quote(symbol: str, chart_result: dict) -> dict:
         else None
     )
 
+    # When the quote block is stale the *candles* are the source of truth, so
+    # their newest timestamp is the moment the price belongs to. Otherwise
+    # regularMarketTime is that moment.
+    market_time = None
+    timestamps = chart_result.get("timestamp") or []
+    if stale and timestamps:
+        market_time = timestamps[-1]
+    elif meta.get("regularMarketTime") is not None:
+        market_time = meta.get("regularMarketTime")
+
+    market_time_iso = None
+    if market_time is not None:
+        try:
+            market_time_iso = datetime.fromtimestamp(
+                float(market_time), tz=timezone.utc
+            ).isoformat()
+        except (TypeError, ValueError, OverflowError, OSError):
+            market_time_iso = None
+
     return {
         "symbol": symbol.upper(),
         "price": price,
@@ -143,6 +162,10 @@ def _format_quote(symbol: str, chart_result: dict) -> dict:
         "price_source": price_source,
         "quote_stale": stale,
         "source": "Yahoo Finance",
+        # When the price was printed, not when it was fetched. The two are
+        # routinely an hour or a weekend apart, and freshness arbitration
+        # between providers is meaningless without this distinction.
+        "market_time": market_time_iso,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

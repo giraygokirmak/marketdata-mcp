@@ -33,6 +33,24 @@ async def _call(coro, context: str):
         _translate(exc, context)
 
 
+def _round_floats(value: Any) -> Any:
+    """Collapse float32 noise from Finviz's JSON before it reaches a caller.
+
+    Finviz serialises prices as 32-bit floats, so a real 331.90 arrives as
+    331.8999938964844. That is harmless while the number is only compared, but
+    it is the number shown to a user when this provider wins on freshness — so
+    it is rounded at the boundary, to 4 decimals (well below a cent) rather
+    than to 2, which would lose real precision on ratios and percentages.
+    """
+    if isinstance(value, dict):
+        return {key: _round_floats(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_round_floats(item) for item in value]
+    if isinstance(value, float):
+        return round(value, 4)
+    return value
+
+
 async def quote(symbol: str) -> dict[str, Any]:
     return await _call(quote_service.get_quote(symbol), "quote")
 
@@ -50,7 +68,7 @@ async def screener_rows(tickers: list[str], *, columns: str | None = None) -> li
         ),
         "screener rows",
     )
-    return data.get("rows") or []
+    return [_round_floats(row) for row in (data.get("rows") or [])]
 
 
 async def screen(

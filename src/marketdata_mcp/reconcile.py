@@ -277,6 +277,43 @@ class Merged:
     comparisons: list[dict[str, Any]] = field(default_factory=list)
     mismatches: list[str] = field(default_factory=list)
     provider: DataProvider = DataProvider.NONE
+    #: Which provider supplied the resolved values, and why. ``None`` when the
+    #: resolution was not a freshness decision (single-source, or no timestamps).
+    chosen: str | None = None
+    freshness: dict[str, Any] = field(default_factory=dict)
+
+
+def _resolved_label(
+    *,
+    tv_time: Any,
+    fv_time: Any,
+) -> tuple[str, dict[str, Any]]:
+    """Decide which provider's values to resolve to when both answered.
+
+    The rule: whichever provider printed more recently wins. When both report
+    the same instant, or neither reports a usable instant, the resolution falls
+    back to Finviz — a fixed, documented default rather than an arbitrary one.
+    """
+    from .freshness import freshest, parse_market_timestamp
+
+    tv_moment = parse_market_timestamp(tv_time)
+    fv_moment = parse_market_timestamp(fv_time)
+    winner = freshest((TRADINGVIEW, tv_moment), (FINVIZ, fv_moment))
+
+    if winner and tv_moment != fv_moment:
+        reason = "newest market print timestamp"
+    elif tv_moment is not None and tv_moment == fv_moment:
+        reason = "timestamps identical; Finviz is the documented default"
+    else:
+        reason = "no usable market timestamp from either provider; Finviz is the documented default"
+
+    info: dict[str, Any] = {
+        "tradingview": tv_moment.isoformat() if tv_moment else None,
+        "finviz": fv_moment.isoformat() if fv_moment else None,
+        "chosen": winner or FINVIZ,
+        "reason": reason,
+    }
+    return (winner or FINVIZ), info
 
 
 def merge(
@@ -286,16 +323,27 @@ def merge(
     *,
     tv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     fv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    tv_time: Any = None,
+    fv_time: Any = None,
 ) -> Merged:
-    """Compare both payloads; fall back to whichever one exists.
+    """Compare both payloads; resolve each field to a single value.
 
-    When both exist, each spec is compared. Matching values are taken from
-    Finviz; *disagreeing* values also resolve to Finviz but are listed in
-    ``mismatches`` and kept verbatim in ``comparisons`` so nothing is hidden.
-    Fields only one side offers are still included, labelled with that side.
+    When both providers answered, every compared field resolves to **one**
+    value: the reading from whichever provider printed more recently
+    (``tv_time``/``fv_time``). Both raw readings stay in ``comparisons``, so the
+    choice is auditable but the caller never has to reconcile two numbers to
+    answer "what is the price".
+
+    Agreement is a separate axis. A field the providers disagree on is listed in
+    ``mismatches`` and named in the notice; it is still resolved to one value,
+    because a response with two prices for one instrument is a worse answer than
+    one price plus a stated conflict.
     """
     if tv_payload is not None and fv_payload is not None:
         out = Merged(provider=DataProvider.BOTH)
+        chosen, freshness = _resolved_label(tv_time=tv_time, fv_time=fv_time)
+        out.chosen = chosen
+        out.freshness = freshness
         for spec in specs:
             tv_value = spec.tv_get(tv_payload) if spec.tv_get else None
             fv_value = spec.fv_get(fv_payload) if spec.fv_get else None
@@ -311,12 +359,23 @@ def merge(
             )
             row["field"] = spec.name
             out.comparisons.append(row)
-            if fv_value is not None:
-                out.data[spec.name] = fv_value
-                out.fields[spec.name] = DataProvider.BOTH
-            elif tv_value is not None:
-                out.data[spec.name] = tv_value
-                out.fields[spec.name] = DataProvider.TRADINGVIEW
+
+            # Resolve to one value: the fresher provider's, falling back to the
+            # other side when the winner did not report this field at all.
+            if chosen == TRADINGVIEW:
+                primary, secondary = tv_value, fv_value
+            else:
+                primary, secondary = fv_value, tv_value
+            value = primary if primary is not None else secondary
+            if value is not None:
+                out.data[spec.name] = value
+                both_supplied = tv_value is not None and fv_value is not None
+                out.fields[spec.name] = (
+                    DataProvider.BOTH if both_supplied else DataProvider(chosen)
+                )
+                row["chosen"] = chosen if primary is not None else (
+                    FINVIZ if chosen == TRADINGVIEW else TRADINGVIEW
+                )
             if row["match"] is False:
                 out.mismatches.append(spec.name)
 
@@ -353,18 +412,38 @@ def merge(
 
 
 def notice_for(merged: Merged) -> str:
-    """Provider notice, extended with any mismatch explanation."""
+    """Provider notice, extended with agreement and freshness explanation."""
     base = PROVIDER_MEANING[merged.provider]
-    if merged.provider is DataProvider.BOTH:
-        if merged.mismatches:
-            base += (
-                " NOTE: the two providers disagree on "
-                + ", ".join(merged.mismatches)
-                + "; both readings appear in `comparisons`. The Finviz reading is "
-                "shown in `data` — the conflict is reported, not silently resolved."
+    if merged.provider is not DataProvider.BOTH:
+        return base
+
+    chosen = merged.chosen or FINVIZ
+    freshness = merged.freshness or {}
+    reason = freshness.get("reason", "")
+
+    if merged.mismatches:
+        if reason == "newest market print timestamp":
+            why = f" the value shown is {chosen}'s because it printed more recently."
+        elif reason.startswith("timestamps identical"):
+            why = (
+                f" both providers printed at the same instant, so the value shown "
+                f"is {chosen}'s (the documented default)."
             )
         else:
-            base += " Compared fields agree within tolerance."
+            why = ""
+        base += (
+            " NOTE: the two providers disagree on "
+            + ", ".join(merged.mismatches)
+            + "; both readings appear in `comparisons` and the response holds a "
+            f"single value.{why} The conflict is reported, not silently resolved."
+        )
+    else:
+        base += " Compared fields agree within tolerance."
+        if reason == "newest market print timestamp":
+            base += (
+                f" The value shown is {chosen}'s because it printed more recently "
+                "than the other provider's."
+            )
     return base
 
 
@@ -380,6 +459,8 @@ def finalize(
     fv_norm: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     tv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     fv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    tv_time: Any = None,
+    fv_time: Any = None,
     sources: dict[str, str] | None = None,
     warnings: Iterable[str] = (),
     degraded: bool = False,
@@ -393,6 +474,10 @@ def finalize(
     ``tv_norm``/``fv_norm`` map a raw provider payload into the normalised field
     dict that ``specs`` read from; when given, every remaining normalised field
     is attached to the output labelled with its source provider.
+
+    ``tv_time``/``fv_time`` are the **market print** timestamps (not fetch
+    times). When both providers answered, every compared field resolves to the
+    fresher provider's reading; both originals stay in ``comparisons``.
 
     ``data``/``provider`` override the reconciled payload and label; tools that
     compose a richer payload than the field list use them, and the notice is
@@ -409,7 +494,20 @@ def finalize(
         if fv_shape is None:
             fv_shape = _identity
 
-    merged = merge(tv_payload, fv_payload, specs, tv_shape=tv_shape, fv_shape=fv_shape)
+    if tv_time is None and tv_payload is not None:
+        tv_time = tv_payload.get("price_timestamp")
+    if fv_time is None and fv_payload is not None:
+        fv_time = fv_payload.get("price_timestamp")
+
+    merged = merge(
+        tv_payload,
+        fv_payload,
+        specs,
+        tv_shape=tv_shape,
+        fv_shape=fv_shape,
+        tv_time=tv_time,
+        fv_time=fv_time,
+    )
     if provider is not None:
         merged.provider = provider
     if data is not None:
@@ -428,6 +526,16 @@ def finalize(
             "Providers disagree on: " + ", ".join(merged.mismatches)
         )
 
+    merged_extra = dict(extra or {})
+    # Only publish the freshness block when a real comparison happened. Tools
+    # that compare non-price fields (index levels, counts) have no print time
+    # on either side, and reporting "no usable timestamp" there is noise about
+    # a decision that was never in question.
+    if merged.freshness and (
+        merged.freshness.get("tradingview") or merged.freshness.get("finviz")
+    ):
+        merged_extra.setdefault("freshness", merged.freshness)
+
     body = envelope(
         merged.data,
         provider=merged.provider,
@@ -437,7 +545,7 @@ def finalize(
         errors=pair.errors,
         warnings=warn_list,
         degraded=degraded,
-        extra=extra,
+        extra=merged_extra,
     )
     body["notice"] = notice_for(merged)
     if degraded:

@@ -106,7 +106,8 @@ def test_merge_both_reports_agreement_and_mismatch():
     merged = merge({"price": 10.0, "rsi": 50.0}, {"price": 10.05, "rsi": 70.0}, specs)
     assert merged.provider is DataProvider.BOTH
     assert merged.mismatches == ["rsi"]
-    assert merged.data["price"] == 10.05  # Finviz reading is presented
+    # No timestamps on either side, so the documented Finviz default applies.
+    assert merged.data["price"] == 10.05
     assert {c["field"]: c["match"] for c in merged.comparisons} == {"price": True, "rsi": False}
 
 

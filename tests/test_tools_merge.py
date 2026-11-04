@@ -136,3 +136,42 @@ async def test_drift_warning_reaches_normal_tool_responses(fake_providers, _isol
     assert result["degraded"] is True
     assert any("DRIFT" in warning for warning in result["warnings"])
     assert "WARNING" in result["notice"]
+
+
+# ── one price, freshest print ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_quote_returns_a_single_price_and_explains_which(fake_providers):
+    """One price, and the reason it is that one, in the notice."""
+    result = await tools_market.stock_quote("AAPL")
+    assert isinstance(result["data"]["price"], (int, float))
+    assert result["freshness"]["chosen"] == "TRADINGVIEW"
+    assert result["freshness"]["tradingview"] == "2026-11-03T21:00:01+00:00"
+    assert result["freshness"]["finviz"] == "2026-11-03T20:59:00+00:00"
+    assert "printed more recently than the other provider" in result["notice"]
+
+
+@pytest.mark.asyncio
+async def test_quote_prefers_finviz_when_its_print_is_newer(fake_providers):
+    """Freshness, not provider identity, decides. Reverse the timestamps."""
+    fake_providers["tv"]["market_time"] = "2026-11-03T20:00:00+00:00"
+    fake_providers["fv"]["last_close"]["date"] = "Nov 03 • 3:59 PM ET"
+    result = await tools_market.stock_quote("AAPL")
+    assert result["freshness"]["chosen"] == "FINVIZ"
+    assert result["data"]["price"] == pytest.approx(331.9)
+
+
+@pytest.mark.asyncio
+async def test_both_values_survive_in_comparisons_after_selection(fake_providers):
+    """Selecting one value must not discard the audit trail."""
+    fake_providers["fv"]["last_close"]["price"] = 340.0
+    result = await tools_market.stock_quote("AAPL")
+    row = next(c for c in result["comparisons"] if c["field"] == "price")
+    assert row["tv"] == pytest.approx(331.9)
+    assert row["fv"] == pytest.approx(340.0)
+    assert row["match"] is False
+    assert row["chosen"] == "TRADINGVIEW"
+    # The fresher value is the one presented.
+    assert result["data"]["price"] == pytest.approx(331.9)
+    assert "Providers disagree on: price" in result["warnings"]

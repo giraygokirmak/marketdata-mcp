@@ -147,6 +147,7 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
             "currency": quote_data.get("currency"),
             "exchange": quote_data.get("exchange"),
             "quote_stale": quote_data.get("quote_stale"),
+            "price_timestamp": quote_data.get("market_time"),
             "tradingview_symbol": scanner.get("ticker"),
             "description": scanner.get("description"),
             "sector": scanner.get("sector"),
@@ -162,6 +163,8 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
         shaped["change_percent"] = header.get("change_percent")
         snapshot = payload.get("snapshot_numeric") or {}
         shaped["previous_close"] = snapshot.get("Prev Close")
+        # Finviz renders the print time next to the price ("Nov 03 • 3:59 PM ET").
+        shaped["price_timestamp"] = header.get("date")
         return shaped
 
     return finalize(
@@ -228,6 +231,7 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
         fv_row = fv_rows.get(symbol) or fv_rows.get(to_finviz(symbol))
         if tv_row and fv_row:
             from .reconcile import compare_numeric
+            from .freshness import freshest, parse_market_timestamp
 
             price_cmp = compare_numeric(tv_row.get("close"), fv_row.get("price"), tolerance_pct=0.5)
             change_cmp = compare_numeric(
@@ -237,17 +241,24 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
             # separate axis: `agrees` is false when the readings differ beyond
             # tolerance, and both numbers stay in `comparisons`.
             agree = price_cmp["match"] is not False and change_cmp["match"] is not False
+
+            # One price per row, from whichever provider printed more recently.
+            tv_moment = parse_market_timestamp(tv_row.get("update_time") or tv_row.get("timestamp"))
+            fv_moment = parse_market_timestamp(fv_row.get("last_update") or fv_row.get("fetched_at"))
+            winner = freshest((TRADINGVIEW, tv_moment), (FINVIZ, fv_moment)) or FINVIZ
+            source_row = tv_row if winner == TRADINGVIEW else fv_row
             rows.append(
                 {
                     "symbol": symbol,
-                    "price": fv_row.get("price"),
-                    "change_percent": fv_row.get("change"),
-                    "previous_close": fv_row.get("prevClose"),
-                    "volume": fv_row.get("volume"),
-                    "company": fv_row.get("company"),
+                    "price": source_row.get("close") if winner == TRADINGVIEW else source_row.get("price"),
+                    "change_percent": source_row.get("change"),
+                    "previous_close": source_row.get("prevClose") or fv_row.get("prevClose"),
+                    "volume": source_row.get("volume"),
+                    "company": fv_row.get("company") or tv_row.get("description"),
                     "data_provider": DataProvider.BOTH.value,
                     "verification": "VERIFIED",
                     "agrees": agree,
+                    "price_source": winner,
                     "comparisons": {"price": price_cmp, "change_percent": change_cmp},
                 }
             )

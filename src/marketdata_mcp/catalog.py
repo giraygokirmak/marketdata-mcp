@@ -21,8 +21,11 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "comparison": "price, change %, previous close, volume, 52-week high/low, P/E, RSI(14)",
         "notes": (
             "Price and change are compared within 0.5%, P/E within 2%, RSI within 5%. "
-            "Finviz-only fields (the 84-field snapshot, profile, peers, after-hours) "
-            "ride along and are labelled per field in `fields`."
+            "Each compared field resolves to ONE value: the reading from whichever "
+            "provider printed more recently (see `freshness`); both originals stay in "
+            "`comparisons`. Ties fall back to Finviz. Finviz-only fields (the 84-field "
+            "snapshot, profile, peers, after-hours) ride along and are labelled per "
+            "field in `fields`."
         ),
     },
     {
@@ -32,7 +35,9 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "comparison": "price and change % per ticker",
         "notes": (
             "Each row carries its own data_provider and an `agrees` flag: a ticker "
-            "can be BOTH, single-source or NONE independently of the others."
+            "can be BOTH, single-source or NONE independently of the others. A BOTH "
+            "row also carries `price_source` — which provider's fresher print the "
+            "single `price` came from — plus its own `comparisons` block."
         ),
     },
     {
