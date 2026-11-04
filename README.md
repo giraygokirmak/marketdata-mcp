@@ -29,8 +29,14 @@ The same envelope also contains:
   "data_provider": "BOTH",
   "verification": "VERIFIED",           // VERIFIED | UNVERIFIED | UNAVAILABLE
   "notice": "Data came from BOTH providers ...",  // sentence to relay to the user
-  "data": { ... },                      // the reconciled payload
+  "data": { ... },                      // the reconciled payload — one value per field
   "fields": { "price": "BOTH", "peers": "FINVIZ" },   // per-field provenance
+  "freshness": {                        // why `data` holds the value it does
+    "tradingview": "2026-11-03T21:00:01+00:00",
+    "finviz": "2026-11-03T20:59:00+00:00",
+    "chosen": "TRADINGVIEW",
+    "reason": "newest market print timestamp"
+  },
   "comparisons": [                      // the actual side-by-side numbers
     { "field": "price", "tv": 331.9, "fv": 331.9,
       "match": true, "diff": 0.0, "diff_pct": 0.0, "tolerance_pct": 0.5 }
@@ -43,11 +49,18 @@ The same envelope also contains:
 }
 ```
 
+**One price, and it is the freshest one.** When both providers answer, `data` holds a single value
+per compared field: the reading from whichever provider printed more recently. `freshness` records
+both print times and why one won — ties and unparseable timestamps fall back to Finviz, a fixed
+documented default. Both original readings always stay in `comparisons`.
+
 **Disagreements are never silently resolved.** If the providers report different prices, both values
 stay in `comparisons`, the field is named in `notice` and `warnings`, and the response stays `BOTH`
-(both *did* answer — they just disagree). An agent reading it can see exactly how far apart they are.
+(both *did* answer — they just disagree). The single value in `data` is the fresher print, and the
+notice says so; an agent can see exactly how far apart the two sources are.
 
 Implementation: [`reconcile.py`](src/marketdata_mcp/reconcile.py) (fan-out + comparison),
+[`freshness.py`](src/marketdata_mcp/freshness.py) (print-time selection),
 [`providers_state.py`](src/marketdata_mcp/providers_state.py) (envelope).
 
 ---
@@ -272,7 +285,7 @@ No proxy configuration exists: both providers reach their upstreams directly.
 
 ```bash
 pip install -e ".[dev]"     # or: uv pip install -e . --group dev
-pytest                      # 110 hermetic tests, no network
+pytest                      # 142 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 ```
 
@@ -286,7 +299,8 @@ baseline and assert the warning reaches a normal tool response.
 src/marketdata_mcp/
 ├── server.py             FastMCP instance, lifespan, /health, CLI
 ├── providers_state.py    DataProvider enum, errors, response envelope
-├── reconcile.py          concurrent fan-out, comparison, fallback
+├── reconcile.py          concurrent fan-out, comparison, fallback, notice text
+├── freshness.py          market-print timestamps + freshest-print selection
 ├── merge_helpers.py      pure payload shapers (raw provider dict -> fields)
 ├── sentiment.py          token-free headline scoring (VADER + finance lexicon)
 ├── symbols.py            BRK-B <-> BRK.B, ^GSPC <-> SPX, venue mapping
@@ -299,6 +313,25 @@ src/marketdata_mcp/
 ├── tools_health.py       health + tool map
 └── providers/            vendored provider code (see NOTICE)
 ```
+
+## Documentation
+
+The full manual lives in [`docs/wiki/`](docs/wiki/) and is mirrored to the GitHub wiki:
+
+| Page | What it covers |
+| --- | --- |
+| [Home](docs/wiki/Home.md) | What the server is, install, first call |
+| [Getting Started](docs/wiki/Getting-Started.md) | Install → configure → first response |
+| [Response Contract](docs/wiki/Response-Contract.md) | Every envelope field, tolerances, disagreement handling |
+| [Tools Reference](docs/wiki/Tools-Reference.md) | All 33 tools, grouped, with arguments |
+| [Architecture](docs/wiki/Architecture.md) | Module boundaries, fan-out, health-monitor lifecycle |
+| [Health Monitor](docs/wiki/Health-Monitor.md) | Probes, fingerprints, drift detection |
+| [Sentiment](docs/wiki/Sentiment.md) | Marketaux path and the token-free VADER fallback |
+| [Configuration](docs/wiki/Configuration.md) | Every environment variable, with real defaults |
+| [Docker](docs/wiki/Docker.md) | Image, compose, volumes, healthcheck |
+| [Development](docs/wiki/Development.md) | Tests, layout, CI, adding a tool |
+| [Troubleshooting](docs/wiki/Troubleshooting.md) | Symptom → cause → fix |
+| [Design Decisions](docs/wiki/Design-Decisions.md) | Why the contract looks like this |
 
 ## Provenance of the vendored providers
 
