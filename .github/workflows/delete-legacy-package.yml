@@ -9,28 +9,41 @@ permissions:
 jobs:
   delete:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OWNER: ${{ github.repository_owner }}
+      REPO: ${{ github.repository }}
     steps:
       - name: Identify the token
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -sS -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/user \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); print('login:', d.get('login')); print('type :', d.get('type'))"
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print('login:', d.get('login'), '| type:', d.get('type'))"
 
-      - name: Delete ghcr.io/${{ github.repository_owner }}/marketdata-mcp
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attempt 1 - user-scoped delete
         run: |
-          echo "user-scoped endpoint:"
           curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/user/packages/container/marketdata-mcp" \
             -w '\nHTTP=%{http_code}\n' || true
 
+      - name: Attempt 2 - repo-scoped delete
+        run: |
+          curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/packages/container/marketdata-mcp" \
+            -w '\nHTTP=%{http_code}\n' || true
+
+      - name: Attempt 3 - org-scoped delete
+        run: |
+          curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/${OWNER}/packages/container/marketdata-mcp" \
+            -w '\nHTTP=%{http_code}\n' || true
+
       - name: Is it still there?
         run: |
-          TK=$(curl -sS "https://ghcr.io/token?scope=repository%3A${{ github.repository_owner }}%2Fmarketdata-mcp%3Apull&service=ghcr.io" \
+          TK=$(curl -sS "https://ghcr.io/token?scope=repository%3A${OWNER}%2Fmarketdata-mcp%3Apull&service=ghcr.io" \
                | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))")
-          if [ -z "$TK" ]; then echo "GONE (anonymous pull token denied)"; exit 0; fi
-          echo "STILL PRESENT:"; curl -sS -H "Authorization: Bearer $TK" \
-            "https://ghcr.io/v2/${{ github.repository_owner }}/marketdata-mcp/tags/list"
+          if [ -z "$TK" ]; then echo "RESULT: GONE"; exit 0; fi
+          echo "RESULT: STILL PRESENT"
+          curl -sS -H "Authorization: Bearer $TK" "https://ghcr.io/v2/${OWNER}/marketdata-mcp/tags/list"
