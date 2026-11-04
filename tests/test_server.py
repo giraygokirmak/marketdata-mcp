@@ -1,0 +1,123 @@
+"""Regression tests for server wiring.
+
+The important one: FastMCP's streamable-HTTP app hardcodes its own Starlette
+lifespan, so the ``lifespan=`` passed to ``FastMCP()`` is never run on that
+transport. If the health monitor only started from the lifespan, the Docker
+deployment would silently never probe its upstreams and every response would
+claim ``UNKNOWN`` health. These tests pin the self-starting behaviour.
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from marketdata_mcp import server
+
+
+def test_all_tools_are_registered():
+    tools = asyncio.run(server.mcp.list_tools())
+    names = {tool.name for tool in tools}
+    expected = {
+        "stock_quote",
+        "stock_prices",
+        "stock_screener",
+        "market_indices",
+        "stock_news",
+        "stock_options_chain",
+        "stock_earnings",
+        "stock_extended_hours",
+        "technical_analysis",
+        "stock_filings",
+        "stock_ownership",
+        "stock_peers",
+        "stock_why_moving",
+        "stock_chart",
+        "stock_dilution",
+        "stock_screener_filters",
+        "crypto_top_movers",
+        "crypto_bollinger_scan",
+        "crypto_volume_breakout",
+        "crypto_multi_timeframe",
+        "crypto_multi_agent",
+        "futures_market_overview",
+        "futures_top_movers",
+        "futures_watchlist",
+        "stock_backtest",
+        "stock_backtest_compare",
+        "market_snapshot",
+        "bitcoin_market_pulse",
+        "market_sentiment",
+        "egx_market_overview",
+        "combined_analysis",
+        "marketdata_health",
+        "marketdata_tool_map",
+    }
+    assert names == expected
+    assert len(names) == 33
+
+
+def test_every_tool_has_a_description():
+    tools = asyncio.run(server.mcp.list_tools())
+    undocumented = [tool.name for tool in tools if not (tool.description or "").strip()]
+    assert not undocumented, f"tools without a description: {undocumented}"
+
+
+def test_server_instructions_document_the_provider_contract():
+    instructions = server.INSTRUCTIONS
+    for value in ("BOTH", "TRADINGVIEW", "FINVIZ", "NONE"):
+        assert value in instructions
+    assert "single-source" in instructions.lower()
+
+
+@pytest.mark.asyncio
+async def test_monitor_self_starts_without_the_lifespan(monkeypatch, _isolate_health_state):
+    """The HTTP transport never runs our lifespan; reading the monitor must start it."""
+
+    monitor = _isolate_health_state
+    monitor._task = None
+    # conftest disables the monitor for the suite by default; this test is
+    # specifically about the enabled case.
+    monitor.enabled = True
+
+    async def no_network(*, force: bool = False):
+        return {}
+
+    monkeypatch.setattr(monitor, "run_once", no_network)
+
+    monitor.summary()  # what a tool call / /health route does
+    await asyncio.sleep(0)  # let the created task begin
+
+    assert monitor._task is not None, "monitor was not started by summary()"
+    assert not monitor._task.done()
+    monitor._task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_monitor_respects_the_disable_switch(monkeypatch, _isolate_health_state):
+    monitor = _isolate_health_state
+    monitor._task = None
+    monitor.enabled = False
+
+    monitor.warnings_for(("TRADINGVIEW",))
+    await asyncio.sleep(0)
+
+    assert monitor._task is None, "disabled monitor must not start a background task"
+
+
+def test_ensure_started_is_safe_without_a_running_loop(_isolate_health_state):
+    monitor = _isolate_health_state
+    monitor._task = None
+    monitor.ensure_started()  # sync context: must be a silent no-op, not a crash
+    assert monitor._task is None
+
+
+def test_tool_map_enumerates_every_registered_tool():
+    from marketdata_mcp.catalog import TOOL_CATALOG
+
+    catalogued = {row["name"] for row in TOOL_CATALOG}
+    registered = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
+    missing = registered - catalogued
+    assert not missing, f"tools missing from the catalog: {sorted(missing)}"
+    stale = catalogued - registered
+    assert not stale, f"catalog lists tools that do not exist: {sorted(stale)}"

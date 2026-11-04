@@ -1,0 +1,76 @@
+[project]
+name = "marketdata-mcp-server"
+version = "1.0.0"
+description = "MCP server that serves TradingView and Finviz market data together, cross-checks overlapping fields, labels every response BOTH/TRADINGVIEW/FINVIZ/NONE and monitors upstream schema drift"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+  { name = "Giray Gokirmak", email = "giray@gokirmak.gen.tr" }
+]
+urls = { Repository = "https://github.com/giraygokirmak/marketdata-mcp" }
+keywords = [
+  "mcp", "market-data", "tradingview", "finviz", "cross-verification",
+  "redundancy", "screener", "technical-analysis", "stocks", "crypto", "agents"
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "feedparser>=6.0.12",
+  "httpx>=0.27",
+  # Lower bound 1.14.0: the server uses `from __future__ import annotations`, so
+  # annotations reach FastMCP as strings; Tool.from_function in <=1.13.x calls
+  # issubclass() on them and dies at import time.
+  # Upper bound excludes 2.x: it removed mcp.server.fastmcp, which both vendored
+  # providers and this server import. Migrating to the 2.x SDK is a deliberate
+  # change, not something a rebuild should force.
+  "mcp[cli]>=1.14.0,<2",
+  "pandas>=2",
+  # python-dateutil 3.0.0 rewrote tz.tzfile, which breaks pandas 2.x dateutil
+  # time zones with `'NoneType' object has no attribute 'total_seconds'`.
+  "python-dateutil>=2.8.2,<3",
+  "requests>=2.32",
+  # Pinned to ==3.0.0 on purpose: 3.2.0 makes a bare Query() default to a stock
+  # preset filter that silently returns 0 rows for crypto/futures scans.
+  "tradingview-screener==3.0.0",
+  "tradingview-ta>=3.3.0",
+]
+
+[project.scripts]
+marketdata-mcp = "marketdata_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["marketdata_mcp*"]
+
+[tool.setuptools.package-data]
+marketdata_mcp = ["providers/tradingview/coinlist/*.txt"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+  "respx>=0.21",
+]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Default runs stay hermetic: no test hits a live upstream unless marked.
+addopts = '-m "not live"'
+markers = [
+  "live: hits TradingView/Finviz/Yahoo for real (not run in CI)",
+]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"

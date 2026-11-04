@@ -218,3 +218,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── marketdata-mcp ────────────────────────────────────────────
+# Persisted provider-health baselines and rendered chart PNGs (runtime state).
+.marketdata-mcp/
+health_state.json
+health_state.json.tmp
+/tmp/
+*.png.tmp

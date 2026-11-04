@@ -1,0 +1,54 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Run the hermetic suite
+        run: pytest -q
+
+      - name: Smoke-test the tool surface
+        run: |
+          python - <<'PY'
+          import asyncio
+          from marketdata_mcp.server import mcp
+
+          tools = asyncio.run(mcp.list_tools())
+          names = {tool.name for tool in tools}
+          required = {
+              "stock_quote", "stock_prices", "stock_screener", "market_indices",
+              "stock_news", "stock_options_chain", "stock_earnings",
+              "stock_extended_hours", "technical_analysis",
+              "stock_filings", "stock_ownership", "stock_chart",
+              "marketdata_health", "marketdata_tool_map",
+          }
+          missing = required - names
+          assert not missing, f"missing tools: {sorted(missing)}"
+          print(f"{len(names)} tools registered")
+          PY

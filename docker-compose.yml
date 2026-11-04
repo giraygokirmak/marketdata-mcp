@@ -1,0 +1,43 @@
+services:
+  marketdata-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: marketdata-mcp:latest
+    container_name: marketdata-mcp
+    # Same host-port convention as the two servers this replaces
+    # (tradingview-mcp was 6001, finviz-mcp was 6007).
+    ports:
+      - "6013:8000"
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      # Finviz is scraped; keep the cache short so quotes stay fresh.
+      - FINVIZ_CACHE_TTL=30
+      - FINVIZ_TIMEOUT=25
+      # Provider health / schema-drift monitor.
+      - MARKETDATA_HEALTH_ENABLED=true
+      - MARKETDATA_HEALTH_INTERVAL=300
+      - MARKETDATA_HEALTH_TTL=60
+      - MARKETDATA_HEALTH_STATE=/home/mcpuser/.marketdata-mcp/state/health_state.json
+      - FINVIZ_CHART_DIR=/home/mcpuser/.marketdata-mcp/charts
+    volumes:
+      # Persist chart PNGs and the drift-detection baselines across restarts.
+      - marketdata-state:/home/mcpuser/.marketdata-mcp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  marketdata-state:
