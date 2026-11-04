@@ -703,7 +703,7 @@ def notice_for(merged: Merged) -> str:
             why = f" The value shown is {chosen}'s because it printed more recently."
         elif decision == "tie":
             why = (
-                f" the showing providers printed at the same instant, so the value "
+                f" The showing providers printed at the same instant, so the value "
                 f"shown is {chosen}'s (documented order)."
             )
         else:
