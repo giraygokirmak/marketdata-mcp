@@ -443,37 +443,6 @@ src/tapebasis/
 └── providers/            provider implementations (TradingView, Finviz)
 ```
 
-## Documentation
-
-The full manual lives in [`docs/wiki/`](docs/wiki/) and is mirrored to the
-[GitHub wiki](https://github.com/giraygokirmak/tapebasis/wiki). Pages are authored with
-wiki-style links, so the same files render correctly in both places. `docs/` is the source of
-truth; the wiki is generated from it:
-
-```bash
-./scripts/publish-wiki.sh          # sync docs/wiki/*.md into the wiki
-./scripts/publish-wiki.sh --dry-run
-```
-
-The wiki is a separate git repository that GitHub only creates once a first page exists. That
-bootstrap is the one manual step: open the wiki tab, add any page, then run the script (it
-overwrites the placeholder).
-
-| Page | What it covers |
-| --- | --- |
-| [Home](docs/wiki/Home.md) | What the server is, install, first call |
-| [Getting Started](docs/wiki/Getting-Started.md) | Install → configure → first response |
-| [Response Contract](docs/wiki/Response-Contract.md) | Every envelope field, tolerances, disagreement handling |
-| [Tools Reference](docs/wiki/Tools-Reference.md) | All 33 tools, grouped, with arguments |
-| [Architecture](docs/wiki/Architecture.md) | Module boundaries, fan-out, rate limiting, health lifecycle |
-| [Health Monitor](docs/wiki/Health-Monitor.md) | Probes, fingerprints, drift detection |
-| [Sentiment](docs/wiki/Sentiment.md) | Marketaux path and the token-free VADER fallback |
-| [Configuration](docs/wiki/Configuration.md) | Every environment variable, with real defaults |
-| [Docker](docs/wiki/Docker.md) | Image, compose, volumes, healthcheck |
-| [Development](docs/wiki/Development.md) | Tests, layout, CI, adding a tool |
-| [Troubleshooting](docs/wiki/Troubleshooting.md) | Symptom → cause → fix |
-| [Design Decisions](docs/wiki/Design-Decisions.md) | Why the contract looks like this |
-
 ## Note on labelling
 
 Every provider is asked for its own data. TradingView quotes come from
