@@ -16,17 +16,17 @@ upgrades news and sentiment to a licensed feed.
 
 ## Why this exists
 
-Running two market-data MCP servers means an agent has to decide which one to trust, and it has no
-basis for that decision. Merging them inverts the problem: the server asks both, compares, and tells
-the agent what it is holding.
+One market-data source gives an agent a single number and no way to judge it. Asking two independent
+providers the same question and comparing the answers inverts the problem: the server asks both,
+compares, and tells the agent what it is holding.
 
-| Situation | What a merged server can say | What two separate servers cannot |
+| Situation | What this server reports | What a single-source feed cannot |
 | --- | --- | --- |
-| Both providers answer, values agree | `BOTH` — cross-verified | nothing; the agent saw two numbers and guessed |
-| Both answer, values differ | `BOTH` + both values in `comparisons` + a warning | silently pick one |
-| One provider is down | `TRADINGVIEW`/`FINVIZ` + "not cross-verified" | the agent may not notice the outage |
-| Both down | `NONE` — no value presented | a stale or invented number |
-| Upstream markup changed | `degraded: true` + a named warning | a silently empty or wrong response |
+| Both providers answer, values agree | `BOTH` — cross-verified | confirm the number against an independent reading |
+| Both answer, values differ | `BOTH` + both values in `comparisons` + a warning | show that a disagreement exists |
+| One provider is down | `TRADINGVIEW`/`FINVIZ` + "not cross-verified" | say the figure is single-source |
+| Both down | `NONE` — no value presented | avoid a stale or invented number |
+| Upstream markup changed | `degraded: true` + a named warning | avoid a silently empty or wrong response |
 
 ---
 
@@ -129,16 +129,12 @@ Details: [Getting Started](Getting-Started) · [Docker](Docker).
 
 ---
 
-## Provenance of the vendored providers
+## Note on labelling
 
-`src/marketdata_mcp/providers/tradingview` and `.../finviz` are vendored from the author's own
-`tradingview-mcp` and `finviz-mcp` servers, with imports rewritten and the proxy layer removed. Their
-upstream licenses and attribution are preserved in [`NOTICE`](https://github.com/giraygokirmak/marketdata-mcp/blob/main/NOTICE).
-
-Note on labelling: the TradingView provider's price and OHLCV data actually come from Yahoo Finance's
-chart API, and its options chain from Yahoo's options endpoint. Responses say so in `sources`, and it
-is still labelled `TRADINGVIEW` because it is that provider's dataset — but it is not TradingView's
-own exchange feed, and the label should not be read as claiming it is.
+The TradingView provider's price and OHLCV data actually come from Yahoo Finance's chart API, and its
+options chain from Yahoo's options endpoint. Responses say so in `sources`, and it is still labelled
+`TRADINGVIEW` because it is that provider's dataset — but it is not TradingView's own exchange feed,
+and the label should not be read as claiming it is.
 
 ---
 

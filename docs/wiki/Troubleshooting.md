@@ -43,7 +43,7 @@ Never present a value when `data_provider` is `NONE`.
 The endpoint still answers 200, which is exactly why this is detected separately.
 
 1. Read the probe's `message` — it names the field or marker that vanished.
-2. Fetch the endpoint yourself and compare against what the vendored parser expects.
+2. Fetch the endpoint yourself and compare against what the parser expects.
 3. If upstream genuinely changed: update the parser or shaper, then reset the baseline.
 4. If the change looks temporary/interstitial: wait one interval, re-check with `refresh=True`.
 

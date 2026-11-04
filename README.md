@@ -230,9 +230,9 @@ docker compose up -d --build
 curl -s localhost:6013/health
 ```
 
-Port `6013` on the host follows the same convention as the two servers this replaces
-(`tradingview-mcp` = 6001, `finviz-mcp` = 6007). The named volume `marketdata-state` persists chart
-PNGs **and** the health baselines, so drift detection survives restarts.
+Port `6013` is the published host port; change the mapping in `docker-compose.yml` if it conflicts
+with something already running. The named volume `marketdata-state` persists chart PNGs **and** the
+health baselines, so drift detection survives restarts.
 
 Standalone:
 
@@ -284,8 +284,8 @@ No proxy configuration exists: both providers reach their upstreams directly.
 ## Development
 
 ```bash
-pip install -e ".[dev]"     # or: uv pip install -e . --group dev
-pytest                      # 142 hermetic tests, no network
+pip install -e ".[dev]"     # or, with uv: uv venv && uv pip install -e ".[dev]"
+pytest                      # 145 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 ```
 
@@ -311,7 +311,7 @@ src/marketdata_mcp/
 ├── tools_finviz.py       Finviz-only tools
 ├── tools_tradingview.py  TradingView-only tools
 ├── tools_health.py       health + tool map
-└── providers/            vendored provider code (see NOTICE)
+└── providers/            provider implementations (TradingView, Finviz)
 ```
 
 ## Documentation
@@ -345,16 +345,12 @@ overwrites the placeholder).
 | [Troubleshooting](docs/wiki/Troubleshooting.md) | Symptom → cause → fix |
 | [Design Decisions](docs/wiki/Design-Decisions.md) | Why the contract looks like this |
 
-## Provenance of the vendored providers
+## Note on labelling
 
-`src/marketdata_mcp/providers/tradingview` and `.../finviz` are vendored from the author's own
-`tradingview-mcp` and `finviz-mcp` servers, with imports rewritten and the proxy layer removed. Their
-upstream licenses and attribution are preserved in [`NOTICE`](NOTICE).
-
-Note on labelling: the TradingView provider's price and OHLCV data actually come from Yahoo Finance's
-chart API, and its options chain from Yahoo's options endpoint. Responses say so in `sources`, and it
-is still labelled `TRADINGVIEW` because it is that provider's dataset — but it is not TradingView's
-own exchange feed, and the label should not be read as claiming it is.
+The TradingView provider's price and OHLCV data actually come from Yahoo Finance's chart API, and its
+options chain from Yahoo's options endpoint. Responses say so in `sources`, and it is still labelled
+`TRADINGVIEW` because it is that provider's dataset — but it is not TradingView's own exchange feed,
+and the label should not be read as claiming it is.
 
 ## Disclaimer
 

@@ -22,7 +22,7 @@ import urllib.request
 import urllib.error
 
 _TIMEOUT = 10
-_UA = "tradingview-mcp/0.8.0"
+_UA = "marketdata-mcp/1.0"
 _GLOBAL_URL = "https://api.coingecko.com/api/v3/global"
 _PRICE_URL = (
     "https://api.coingecko.com/api/v3/simple/price"

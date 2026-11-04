@@ -226,7 +226,7 @@ ignore warnings — the same failure mode as a too-loose tolerance, from the oth
 
 ## 20. No proxy support
 
-**Decision:** the vendored providers' proxy layer was removed entirely; no proxy variables exist.
+**Decision:** there is no proxy layer; no proxy variables exist.
 
 **Why:** an explicit requirement, and it simplifies the failure surface. Egress control belongs at
 the network or container layer, where it can be applied consistently and audited.

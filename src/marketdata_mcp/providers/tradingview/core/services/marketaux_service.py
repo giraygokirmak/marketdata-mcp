@@ -95,7 +95,7 @@ def _request(params: dict) -> Optional[list[dict]]:
     q.setdefault("limit", "3")
     url = f"{_API_URL}?{urllib.parse.urlencode(q)}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "tradingview-mcp"})
+        req = urllib.request.Request(url, headers={"User-Agent": "marketdata-mcp/1.0"})
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return data.get("data") or []

@@ -1,4 +1,4 @@
-"""Tiny value-coercion helpers shared by providers and the merge layer."""
+"""Tiny value-coercion helpers shared by providers and the orchestration layer."""
 from __future__ import annotations
 
 from typing import Any

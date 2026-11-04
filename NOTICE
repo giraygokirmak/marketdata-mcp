@@ -2,8 +2,8 @@ marketdata-mcp
 ==============
 Copyright (c) 2026 Giray Gokirmak
 
-This project is MIT-licensed (see LICENSE). It vendors code from two upstream
-MCP servers, whose licenses and attributions are reproduced below.
+This project is MIT-licensed (see LICENSE). It vendors code from upstream
+open-source projects, whose licenses and attributions are reproduced below.
 
 --------------------------------------------------------------------------------
 1. src/marketdata_mcp/providers/tradingview/
@@ -15,10 +15,10 @@ Vendored from:  https://github.com/atilaahmettaner/tradingview-mcp
 Modifications:  package namespace rewritten to
                 marketdata_mcp.providers.tradingview.*; the optional proxy
                 layer (proxy_manager and all PROXY_* environment handling) was
-                removed; the original server.py (MCP tool registrations) was
-                NOT vendored — this project's own dual-source tool layer
-                replaces it. The upstream core/ services and bundled coinlists
-                are used as-is.
+                removed; the upstream server entrypoint (MCP tool
+                registrations, server.py) was NOT vendored — this repository
+                provides its own tool layer. The upstream core/ services and
+                bundled coinlists are used as-is.
 
 Upstream license:
 
@@ -57,9 +57,10 @@ Vendored from:  https://github.com/giraygokirmak/finviz-mcp
 Modifications:  package namespace rewritten to
                 marketdata_mcp.providers.finviz.*; the optional proxy layer
                 (proxy_manager and all PROXY_* environment handling) was
-                removed; the original server.py (MCP tool registrations) was
-                NOT vendored — this project's own tool layer replaces it. The
-                upstream core/ services are used as-is.
+                removed; the upstream server entrypoint (MCP tool
+                registrations, server.py) was NOT vendored — this repository
+                provides its own tool layer. The upstream core/ services are
+                used as-is.
 
 Upstream license:
 

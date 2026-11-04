@@ -12,8 +12,8 @@ docker compose logs -f
 curl -s localhost:6013/health
 ```
 
-Host port `6013` follows the same convention as the two servers this replaces (`tradingview-mcp` was
-6001, `finviz-mcp` was 6007), so existing client configs need only a port swap.
+Host port `6013` is the published host port; change the mapping in `docker-compose.yml` if it
+conflicts with something already running.
 
 ## Standalone
 
@@ -115,7 +115,7 @@ shape — check `docker compose logs` and then [Troubleshooting](Troubleshooting
 - **No proxy support** is built in. Use network-level egress control if you need it.
 - The image has no authentication. Do not expose port 6013 to the public internet without a reverse
   proxy that adds auth.
-- Image size is dominated by pandas and the vendored providers; it is not a slim image.
+- Image size is dominated by pandas and the provider layer; it is not a slim image.
 
 ## Related
 

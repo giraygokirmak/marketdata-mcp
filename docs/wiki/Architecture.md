@@ -56,22 +56,22 @@ src/marketdata_mcp/
 ├── tools_tradingview.py  the 14 TradingView-only tools + combined_analysis
 ├── tools_health.py       marketdata_health + marketdata_tool_map
 └── providers/
-    ├── tradingview/      vendored provider (scanner, Yahoo quote, TA, backtest, …)
-    └── finviz/           vendored provider (quote HTML, screener, ownership, …)
+    ├── tradingview/      provider layer (scanner, Yahoo quote, TA, backtest, …)
+    └── finviz/           provider layer (quote HTML, screener, ownership, …)
 ```
 
 ## Why the layering looks like this
 
-### `providers/` is vendored and untouched
+### `providers/` is kept as an isolated layer
 
-The two providers were separate MCP servers. Vendoring them unchanged (imports aside) means their
-tested upstream handling — HTML parsers, retry logic, rate limiting — keeps working, and future
-upstream fixes can be lifted across. The merge layer is the only new code; it never reaches into
-provider internals.
+Provider implementations live under `providers/` with their upstream handling — HTML parsers, retry
+logic, rate limiting — intact and import paths rewritten. Keeping them self-contained means tested
+behaviour stays stable and upstream fixes can be carried over independently. The orchestration layer
+is the only code that defines the tool contract; it never reaches into provider internals.
 
-Vendored code does not import anything from the merge layer. That one-way dependency is what keeps
-the boundary real rather than decorative. It is why the token-free sentiment fallback lives in
-`tools_tradingview.py` (merge layer) and not inside the vendored `marketaux_service.py`.
+Provider code does not import anything from the orchestration layer. That one-way dependency is what
+keeps the boundary real rather than decorative. It is why the token-free sentiment fallback lives in
+`tools_tradingview.py` and not inside `marketaux_service.py`.
 
 ### `tv_access.py` / `fv_access.py` are adapters, not wrappers
 
@@ -140,7 +140,7 @@ Tool calls only **read** the cached verdict, so a health probe never adds latenc
 
 ## Concurrency and blocking I/O
 
-The vendored providers contain both sync and async code paths. Anything sync is pushed to a worker
+The provider layer contains both sync and async code paths. Anything sync is pushed to a worker
 thread with `asyncio.to_thread`, so a blocking Yahoo `/v8/chart` call cannot stall the event loop for
 other in-flight tool calls.
 

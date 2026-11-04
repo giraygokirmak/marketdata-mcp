@@ -1,5 +1,5 @@
 """
-HTTP transport for finviz-mcp — one place that knows how to talk to finviz.com.
+HTTP transport for the Finviz provider — one place that knows how to talk to finviz.com.
 
 Why this module exists
 ----------------------

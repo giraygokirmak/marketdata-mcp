@@ -12,7 +12,7 @@ pip install -e ".[dev]"
 ## Tests
 
 ```bash
-pytest                      # 142 hermetic tests, no network
+pytest                      # 145 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 pytest tests/test_reconcile.py -v
 ```
@@ -59,7 +59,7 @@ src/marketdata_mcp/
 ├── tools_finviz.py       Finviz-only tools
 ├── tools_tradingview.py  TradingView-only tools + combined_analysis
 ├── tools_health.py       health + tool map
-└── providers/            vendored provider code (see NOTICE)
+└── providers/            provider implementations (TradingView, Finviz)
 ```
 
 ## Adding a dual-source tool
@@ -100,13 +100,13 @@ even though the tool lives in `tools_tradingview.py`.
 - `NOT_ATTEMPTED` is not an error. Do not add it to `errors`.
 - Never fabricate a value. `None` + a reason beats `0.0` that reads as a real finding.
 - Velocities and percentages need a sign convention; state it where it is computed.
-- Vendored provider code does not import from the merge layer. Keep the dependency one-way.
+- Provider code does not import from the orchestration layer. Keep the dependency one-way.
 
 ## Checks before pushing
 
 ```bash
 pytest
-python -m pyflakes src/marketdata_mcp tests        # vendored code has pre-existing noise
+python -m pyflakes src/marketdata_mcp tests        # provider code has pre-existing noise
 python -m compileall -q src/marketdata_mcp
 ```
 

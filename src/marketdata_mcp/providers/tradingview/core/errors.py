@@ -1,5 +1,5 @@
 """
-Structured error envelope and exception types for tradingview-mcp.
+Structured error envelope and exception types for the TradingView provider.
 
 All recoverable failures return a typed error envelope:
 

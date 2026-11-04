@@ -1,5 +1,5 @@
 """
-Structured error envelope and exception types for finviz-mcp.
+Structured error envelope and exception types for the Finviz provider.
 
 Every recoverable failure leaves the MCP boundary as a typed error envelope:
 

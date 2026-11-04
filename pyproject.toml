@@ -27,8 +27,8 @@ dependencies = [
   # Lower bound 1.14.0: the server uses `from __future__ import annotations`, so
   # annotations reach FastMCP as strings; Tool.from_function in <=1.13.x calls
   # issubclass() on them and dies at import time.
-  # Upper bound excludes 2.x: it removed mcp.server.fastmcp, which both vendored
-  # providers and this server import. Migrating to the 2.x SDK is a deliberate
+  # Upper bound excludes 2.x: it removed mcp.server.fastmcp, which the provider
+  # layer and this server import. Migrating to the 2.x SDK is a deliberate
   # change, not something a rebuild should force.
   "mcp[cli]>=1.14.0,<2",
   "pandas>=2",

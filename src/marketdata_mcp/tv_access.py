@@ -1,8 +1,8 @@
 """Thin, typed access to the TradingView provider's service layer.
 
-The vendored provider returns several different shapes: the scanner-based
+The provider layer returns several different shapes: the scanner-based
 screener, the Yahoo chart quote, and the technical-analysis engine. These
-helpers present the shapes the merge layer needs and convert provider
+helpers present the shapes the orchestration layer needs and convert provider
 exceptions into :class:`ProviderError` so the reconciler can label them.
 """
 from __future__ import annotations

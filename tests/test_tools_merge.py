@@ -1,4 +1,4 @@
-"""Hermetic end-to-end tests of the merged tools with faked providers.
+"""Hermetic end-to-end tests of the dual-source tools with faked providers.
 
 These assert the *contract* the server promises: dual-source when both answer,
 single-source (explicitly labelled) when one fails, ``NONE`` when both fail,

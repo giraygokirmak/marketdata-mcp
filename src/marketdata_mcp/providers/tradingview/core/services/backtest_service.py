@@ -1,5 +1,5 @@
 """
-Backtesting Service for tradingview-mcp — v3 (v0.7.0)
+Backtesting Service for the TradingView provider — v3 (v0.7.0)
 
 Pure Python — no pandas, no numpy, no external backtesting libraries.
 
@@ -26,7 +26,7 @@ from marketdata_mcp.providers.tradingview.core.services.indicators_calc import (
     calc_supertrend, calc_donchian,
 )
 
-_UA       = "tradingview-mcp/0.7.0 backtest-bot"
+_UA       = "marketdata-mcp/1.0 backtest-bot"
 _YF_BASE  = "https://query1.finance.yahoo.com/v8/finance/chart"
 
 _VALID_PERIODS   = {"1mo", "3mo", "6mo", "1y", "2y"}

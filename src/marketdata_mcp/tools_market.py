@@ -5,7 +5,7 @@ answers, and returns the reconciled payload with an explicit
 ``data_provider`` label. See :mod:`marketdata_mcp.reconcile` for the rules.
 
 Providers are addressed through :mod:`marketdata_mcp.tv_access` and
-:mod:`marketdata_mcp.fv_access`, which normalise the vendored service layers.
+:mod:`marketdata_mcp.fv_access`, which normalise the provider service layers.
 """
 from __future__ import annotations
 

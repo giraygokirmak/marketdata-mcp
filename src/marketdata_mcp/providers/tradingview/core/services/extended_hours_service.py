@@ -32,7 +32,7 @@ from typing import Optional
 import httpx
 
 _TIMEOUT = 12
-_UA = "tradingview-mcp/0.8.1"
+_UA = "marketdata-mcp/1.0"
 _BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
 
 

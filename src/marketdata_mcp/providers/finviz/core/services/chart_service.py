@@ -60,7 +60,7 @@ _CHART_TYPE_MAP = {
 _SCALE_MAP = {"l": "linear", "linear": "linear", "log": "logarithmic"}
 
 DEFAULT_DIR = os.environ.get(
-    "FINVIZ_CHART_DIR", os.path.join(os.path.expanduser("~"), ".finviz-mcp", "charts")
+    "FINVIZ_CHART_DIR", os.path.join(os.path.expanduser("~"), ".marketdata-mcp", "charts")
 )
 
 
@@ -137,7 +137,7 @@ async def download_chart(
     """Download a chart PNG to disk and return its path plus provenance.
 
     The file is written to ``FINVIZ_CHART_DIR`` (default
-    ``~/.finviz-mcp/charts``) so a Docker deployment can mount a volume there.
+    ``~/.marketdata-mcp/charts``) so a Docker deployment can mount a volume there.
     The returned ``path`` is absolute and is what an MCP client should hand to
     an image viewer.
 

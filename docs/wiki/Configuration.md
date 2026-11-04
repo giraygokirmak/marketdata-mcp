@@ -29,7 +29,7 @@ See [Health Monitor](Health-Monitor).
 | `FINVIZ_CACHE_TTL` | `30` | Scraped-page cache lifetime (s) |
 | `FINVIZ_TIMEOUT` | `25` | finviz.com HTTP timeout (s) |
 | `FINVIZ_MAX_RETRIES` | `2` | Retries per failed request |
-| `FINVIZ_CHART_DIR` | `~/.finviz-mcp/charts` | Chart PNG output directory |
+| `FINVIZ_CHART_DIR` | `~/.marketdata-mcp/charts` | Chart PNG output directory |
 | `FINVIZ_NEWS_TTL` | `60` | News cache lifetime (s) |
 | `FINVIZ_USER_AGENT` | browser UA | Override the User-Agent sent to finviz.com |
 
@@ -74,9 +74,8 @@ Neither is required. Without a token, sentiment is scored locally from Finviz he
 
 ## No proxy configuration
 
-There is deliberately **no proxy support**. Both providers reach their upstreams directly; the
-vendored providers' original proxy layer was removed. If you need egress control, do it at the
-network or container level.
+There is deliberately **no proxy support**. Both providers reach their upstreams directly. If you
+need egress control, do it at the network or container level.
 
 ## Example `.env`
 
@@ -107,7 +106,7 @@ export them in the parent process.
 | Path | Contents | Safe to delete? |
 | --- | --- | --- |
 | `~/.marketdata-mcp/health_state.json` | Probe baselines + last verdicts | Yes — re-baselines on next round |
-| `~/.finviz-mcp/charts/` | Generated chart PNGs | Yes |
+| `~/.marketdata-mcp/charts/` | Generated chart PNGs | Yes |
 
 Both live under `~/.marketdata-mcp` by default; in Docker that is the `marketdata-state` volume.
 

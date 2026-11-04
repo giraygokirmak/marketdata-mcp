@@ -5,8 +5,7 @@ services:
       dockerfile: Dockerfile
     image: marketdata-mcp:latest
     container_name: marketdata-mcp
-    # Same host-port convention as the two servers this replaces
-    # (tradingview-mcp was 6001, finviz-mcp was 6007).
+    # Host port mapping. Change 6013 if it conflicts with something already running.
     ports:
       - "6013:8000"
     restart: unless-stopped
