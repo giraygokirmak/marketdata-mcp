@@ -3,6 +3,29 @@
 The image runs the server over streamable HTTP as a non-root user, with a healthcheck and a named
 volume for state.
 
+## Prebuilt image (GHCR)
+
+Every push to `main` publishes a multi-arch image to the GitHub Container Registry, so a deployment
+can skip the build entirely:
+
+```bash
+docker pull ghcr.io/giraygokirmak/marketdata-mcp:latest
+docker run -d --name marketdata-mcp -p 6013:8000 \
+  -v marketdata-state:/home/mcpuser/.marketdata-mcp \
+  ghcr.io/giraygokirmak/marketdata-mcp:latest
+curl -s localhost:6013/health
+```
+
+| Tag | Points at |
+| --- | --- |
+| `latest`, `main` | Head of `main` |
+| `sha-<shortsha>` | One exact commit |
+| `<major>.<minor>.<patch>`, `<major>.<minor>`, `<major>` | A pushed `v*` tag |
+
+One manifest covers `linux/amd64` and `linux/arm64`. The package is public, so no login is needed to
+pull it. If you fork the repository, the workflow publishes to your own namespace automatically
+(`images: ghcr.io/${{ github.repository }}`) using the built-in `GITHUB_TOKEN` — no extra secret.
+
 ## Compose (recommended)
 
 ```bash
@@ -12,10 +35,13 @@ docker compose logs -f
 curl -s localhost:6013/health
 ```
 
+`--build` builds from this checkout. To run the published image through compose instead, drop the
+`build:` block (or set `image:` to the GHCR reference) and run `docker compose up -d`.
+
 Host port `6013` is the published host port; change the mapping in `docker-compose.yml` if it
 conflicts with something already running.
 
-## Standalone
+## Standalone build
 
 ```bash
 docker build -t marketdata-mcp:latest .

@@ -116,3 +116,4 @@ If `data_provider` were `TRADINGVIEW` or `FINVIZ`, the notice would say the data
 - [Response Contract](Response-Contract) — every field explained
 - [Tools Reference](Tools-Reference) — all 33 tools
 - [Configuration](Configuration) — environment variables
+- [Docker](Docker) — prebuilt GHCR image or a local build

@@ -119,11 +119,14 @@ curl -s localhost:8000/health
 ```
 
 ```bash
-# Docker
-cp .env.example .env      # optional; every setting has a default
-docker compose up -d --build
+# Docker (prebuilt image from GHCR)
+docker run -d --name marketdata-mcp -p 6013:8000 \
+  -v marketdata-state:/home/mcpuser/.marketdata-mcp \
+  ghcr.io/giraygokirmak/marketdata-mcp:latest
 curl -s localhost:6013/health
 ```
+
+Or build from the checkout with `docker compose up -d --build`.
 
 Details: [Getting Started](Getting-Started) · [Docker](Docker).
 

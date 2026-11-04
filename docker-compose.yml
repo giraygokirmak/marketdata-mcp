@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Built from this checkout. To run the published image instead, delete the
+    # `build:` block above and uncomment this line:
+    # image: ghcr.io/giraygokirmak/marketdata-mcp:latest
     image: marketdata-mcp:latest
     container_name: marketdata-mcp
     # Host port mapping. Change 6013 if it conflicts with something already running.

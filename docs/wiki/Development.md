@@ -117,7 +117,7 @@ Two GitHub Actions workflows:
 | Workflow | Purpose |
 | --- | --- |
 | `test.yml` | Install on 3.10–3.13, run `pytest`, smoke-test the tool surface |
-| `publish-image.yml` | Build and publish the Docker image |
+| `publish-image.yml` | Build and publish the multi-arch image to `ghcr.io/<owner>/<repo>` |
 
 ## Editing these docs
 

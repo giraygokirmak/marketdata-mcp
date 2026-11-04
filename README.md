@@ -224,6 +224,23 @@ curl -s localhost:8000/health
 
 ## Docker
 
+### Prebuilt image (GHCR)
+
+Every push to `main` publishes a multi-arch image to the GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/giraygokirmak/marketdata-mcp:latest
+docker run -d --name marketdata-mcp -p 6013:8000 \
+  -v marketdata-state:/home/mcpuser/.marketdata-mcp \
+  ghcr.io/giraygokirmak/marketdata-mcp:latest
+```
+
+Tags are `latest` and `main` for the branch head, `sha-<shortsha>` for an exact commit, and
+`<major>.<minor>.<patch>` (plus `major.minor` and `major`) once a `v*` tag is pushed. The image is
+built for `linux/amd64` and `linux/arm64`.
+
+### Build locally
+
 ```bash
 cp .env.example .env      # optional; every setting has a default
 docker compose up -d --build
