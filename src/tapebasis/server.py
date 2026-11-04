@@ -1,13 +1,13 @@
-"""tapebasis — one MCP server that cross-checks TradingView and Finviz.
+"""tapebasis, one MCP server that cross-checks three market-data providers.
 
 Run over stdio (default) or streamable HTTP::
 
     tapebasis                       # stdio
     tapebasis streamable-http --host 0.0.0.0 --port 8000
 
-Every tool response carries ``data_provider`` ∈ ``BOTH`` / ``TRADINGVIEW`` /
-``FINVIZ`` / ``NONE``, and any upstream schema drift detected by the health
-monitor is reported inside the same response.
+Every tool response carries ``data_provider`` ∈ ``ALL`` / ``TRADINGVIEW`` /
+``FINVIZ`` / ``YAHOO`` / ``NONE``, and any upstream schema drift detected by the
+health monitor is reported inside the same response.
 """
 from __future__ import annotations
 
@@ -25,23 +25,30 @@ from .providers_state import PROVIDER_MEANING
 logger = logging.getLogger("tapebasis")
 
 INSTRUCTIONS = (
-    "Market data from TWO independent providers — TradingView and Finviz — served "
-    "together. Every tool result includes `data_provider`, one of BOTH, TRADINGVIEW, "
-    "FINVIZ or NONE.\n\n"
+    "Market data from THREE independent providers (TradingView, Finviz and Yahoo "
+    "Finance), each fetched natively. Every tool result includes `data_provider`, one "
+    "of ALL, TRADINGVIEW, FINVIZ, YAHOO or NONE.\n\n"
     "HOW TO READ IT:\n"
-    "- BOTH: both providers answered and the compared values agree. This is the only "
-    "state you may call cross-verified.\n"
-    "- TRADINGVIEW or FINVIZ: only that provider had the data. You MUST tell the user "
-    "this figure is single-source and not cross-verified.\n"
+    "- ALL: every provider that was asked answered. This is COVERAGE, not agreement. "
+    "Check `comparisons` for whether the readings match, and `providers_answered` for "
+    "exactly which providers contributed.\n"
+    "- TRADINGVIEW, FINVIZ or YAHOO: only that provider had the data. You MUST tell the "
+    "user this figure is single-source and not cross-verified.\n"
     "- NONE: no data; do not present a value.\n\n"
+    "Only one value is ever returned per field (the newest market print). Every "
+    "provider's raw reading stays in `comparisons`, and disagreements are named in "
+    "`notice`, never silently resolved. Symbols are resolved per provider, so `XAUUSD` "
+    "reaches TradingView as OANDA:XAUUSD while Yahoo and Finviz report that they do "
+    "not carry it; `resolutions` records how each ticker was derived.\n\n"
     "Per-field provenance is in `fields`, raw side-by-side values in `comparisons`, and "
     "provider failures in `errors`. If `degraded` is true or `warnings` names an upstream "
     "change, relay that warning: the provider health monitor detected an API/schema "
-    "change or outage. Call `tapebasis_health` for details.\n\n"
+    "change or outage. Call `tapebasis_health` for details and for per-provider rate-limit "
+    "state.\n\n"
     "TOOLS: stock_quote, stock_prices, stock_screener, market_indices, stock_news, "
     "stock_options_chain, stock_earnings, stock_extended_hours, technical_analysis, "
     "stock_filings, stock_ownership, stock_peers, stock_why_moving, stock_chart, "
-    "stock_dilution, stock_screener_filters, crypto_* , futures_*, stock_backtest*, "
+    "stock_dilution, stock_screener_filters, crypto_*, futures_*, stock_backtest*, "
     "market_snapshot, market_sentiment, egx_market_overview, combined_analysis, "
     "tapebasis_health, tapebasis_tool_map."
 )
@@ -64,7 +71,7 @@ async def lifespan(_server: FastMCP):
 
 
 mcp = FastMCP(
-    name="Tapebasis — TradingView + Finviz",
+    name="Tapebasis, TradingView + Finviz + Yahoo",
     instructions=INSTRUCTIONS,
     lifespan=lifespan,
 )
@@ -108,6 +115,12 @@ async def health_resource() -> str:
         lines.append(
             f"- {issue['provider']} {issue['status']} {issue['probe']}: {issue['message']}"
         )
+    for name, state in (summary.get("rate_limits") or {}).items():
+        if state.get("cooling_down_s", 0) > 0:
+            lines.append(
+                f"- {name} rate-limit cooldown: {state['cooling_down_s']}s left "
+                f"(block streak {state.get('block_streak')})"
+            )
     return "\n".join(lines)
 
 
@@ -125,6 +138,7 @@ async def _health(_request):
             "version": __version__,
             "tools": TOOL_COUNTS,
             "providers": MONITOR.summary()["providers"],
+            "rate_limits": MONITOR.summary().get("rate_limits", {}),
             "degraded": MONITOR.degraded(),
         }
     )

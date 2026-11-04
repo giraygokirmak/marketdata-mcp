@@ -1,1 +1,1 @@
-"""Service modules — one per finviz.com data source."""
+"""Service modules, one per finviz.com data source."""

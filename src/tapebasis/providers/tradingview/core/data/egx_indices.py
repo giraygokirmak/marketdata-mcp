@@ -11,7 +11,7 @@ Defines the constituent stocks for the main EGX indices:
 Constituents validated against the live TradingView egypt-market listing
 on 2026-08-26 (dead symbols pruned). Index membership itself follows the
 EGX semi-annual reviews (Feb/Aug) and must be updated from egx.com.eg
-announcements — the scanner can verify a symbol exists, not which index
+announcements; the scanner can verify a symbol exists, not which index
 it belongs to.
 """
 from __future__ import annotations
@@ -60,7 +60,7 @@ EGX70_CONSTITUENTS: List[str] = [
     "AMER",   # Amer Group
     "ATLC",   # AT Lease
     "TALM",   # Taaleem Management Services
-    # "AIHC" (Arabia Investments Holding) removed 2026-08-26 — no longer
+    # "AIHC" (Arabia Investments Holding) removed 2026-08-26, no longer
     # returned by the TradingView scanner (delisted/suspended).
     "AIDC",   # Arabia Investment & Development
     "ASPI",   # Aspire Capital Holding

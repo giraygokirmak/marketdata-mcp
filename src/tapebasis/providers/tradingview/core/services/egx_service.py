@@ -1,5 +1,5 @@
 """
-EGX Service — all business logic for Egyptian Exchange (EGX) market tools.
+EGX Service, all business logic for Egyptian Exchange (EGX) market tools.
 
 Contains market overview, sector scanning, index analysis, stock screening,
 trade plan generation, and Fibonacci retracement analysis.
@@ -78,7 +78,7 @@ def get_egx_market_overview(timeframe: str = "1D", limit: int = 10) -> dict:
         try:
             analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=batch)
         except Exception as exc:
-            # Count instead of swallowing outright — a systemic failure
+            # Count instead of swallowing outright: a systemic failure
             # (auth change, schema change) used to surface only as
             # "No data returned for EGX stocks" with zero diagnostic.
             batches_failed += 1
@@ -286,7 +286,7 @@ def run_egx_sector_scanner(
     min_stock_score: int = 60,
 ) -> dict:
     """
-    Full EGX sector rotation scanner — ranks all 18 sectors and surfaces picks.
+    Full EGX sector rotation scanner, ranks all 18 sectors and surfaces picks.
 
     Args:
         timeframe:       TradingView interval (default '1D').
@@ -755,7 +755,7 @@ def screen_egx_stocks(
     limit: int = 20,
 ) -> dict:
     """
-    Production stock ranking engine for EGX — finds strong stocks with setups.
+    Production stock ranking engine for EGX, finds strong stocks with setups.
 
     Args:
         timeframe:    TradingView interval (default '1D').
@@ -834,7 +834,7 @@ def screen_egx_stocks(
             avg_volume = ind.get(AVERAGE_VOLUME)
             liquidity_status = "Pass"
             if avg_volume and avg_volume < 10000:
-                liquidity_status = "Fail — Very Low"
+                liquidity_status = "Fail, Very Low"
                 if min_score >= 55:
                     continue
 
@@ -1006,13 +1006,13 @@ def generate_egx_trade_plan(symbol: str, timeframe: str = "1D") -> dict:
     rr2 = setup["risk_reward"]["to_target_2"] if setup else 0
 
     if ss >= 70 and tq >= 65 and rr2 and rr2 >= 2.0:
-        recommendation = "QUALIFIED — Strong stock with actionable setup"
+        recommendation = "QUALIFIED, Strong stock with actionable setup"
     elif ss >= 70 and tq >= 50:
-        recommendation = "CONDITIONAL — Good stock but setup needs improvement"
+        recommendation = "CONDITIONAL, Good stock but setup needs improvement"
     elif ss >= 55:
-        recommendation = "WATCHLIST — Monitor for better entry"
+        recommendation = "WATCHLIST, Monitor for better entry"
     else:
-        recommendation = "AVOID — Does not meet momentum/quality criteria"
+        recommendation = "AVOID, Does not meet momentum/quality criteria"
 
     output["recommendation"] = recommendation
     output["disclaimer"] = "For educational/informational purposes only. Not financial advice."
@@ -1031,7 +1031,7 @@ def analyze_egx_fibonacci(
 
     Args:
         symbol:    EGX stock symbol (e.g. 'COMI').
-        lookback:  Period for swing high/low — '1M', '3M', '6M', '52W', 'ALL'.
+        lookback:  Period for swing high/low, '1M', '3M', '6M', '52W', 'ALL'.
         timeframe: TradingView interval (default '1D').
 
     Returns:
@@ -1095,7 +1095,7 @@ def analyze_egx_fibonacci(
         return {"error": f"No data found for {full_symbol}"}
 
     ind = analysis[full_symbol].indicators
-    # Backfill ATR (used downstream in the context block — `atr_val = ind.get("ATR")`).
+    # Backfill ATR (used downstream in the context block, `atr_val = ind.get("ATR")`).
     if ind.get("ATR") is None:
         from tapebasis.providers.tradingview.core.services.screener_provider import fetch_atr_for_ticker
         atr_value = fetch_atr_for_ticker(full_symbol, screener, timeframe)
@@ -1126,7 +1126,7 @@ def analyze_egx_fibonacci(
         # Possible via the R3/S3 pivot fallback above; dividing by it would
         # raise an uncaught ZeroDivisionError out of the tool.
         return {
-            "error": "Invalid swing low (<= 0) — cannot compute Fibonacci range",
+            "error": "Invalid swing low (<= 0), cannot compute Fibonacci range",
             "swing_high": swing_high,
             "swing_low": swing_low,
         }

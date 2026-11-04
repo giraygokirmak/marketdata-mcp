@@ -1,5 +1,5 @@
 """
-Futures Service — TradingView futures market data via tradingview_screener.
+Futures Service, TradingView futures market data via tradingview_screener.
 
 Covers CME, COMEX, NYMEX, CBOT, and optionally ICE/EUREX.
 """
@@ -21,7 +21,7 @@ def _futures_query():
     ``futures()`` helper shipped in tradingview-screener 3.2+. Starting in
     3.2.0 every bare ``Query()`` / ``futures()`` injects a default *stock*
     preset (an ``is_primary`` filter plus an equity ``type``/``typespecs``
-    filter2) that silently returns 0 rows for non-equity markets — which would
+    filter2) that silently returns 0 rows for non-equity markets, which would
     break both this module and the crypto screener tools. tradingview-screener
     is pinned to ==3.0.0 in pyproject.toml for exactly this reason; if you ever
     lift that pin, you must clear the stock preset (drop ``filter``/``filter2``)
@@ -73,7 +73,7 @@ _SCREENER_COLS = [
 ]
 
 # get_scanner_data forwards kwargs to requests.post, which has NO default
-# timeout — a stalled TradingView endpoint would otherwise hang the worker
+# timeout, a stalled TradingView endpoint would otherwise hang the worker
 # thread (and the MCP tool call) indefinitely.
 _SCAN_TIMEOUT_S = 20
 
@@ -119,7 +119,7 @@ def get_futures_overview(
     # For a specific known category, query its contracts directly and rank them
     # by volume. A thinly-traded category (e.g. metals) often does NOT appear in
     # the top `limit` rows of an all-futures volume scan, so the old approach of
-    # "scan everything, then filter by name" returned nothing — and then
+    # "scan everything, then filter by name" returned nothing, and then
     # silently fell back to the full unfiltered list, mislabeling unrelated
     # contracts under the requested category. Querying the category tickers is
     # both reliable and honest.
@@ -192,7 +192,7 @@ def get_futures_category_snapshot(category: str) -> dict[str, Any]:
     try:
         count, df = q.get_scanner_data(timeout=_SCAN_TIMEOUT_S)
     except Exception as exc:
-        # Do NOT silently fall back to an unrelated volume scan — that returns
+        # Do NOT silently fall back to an unrelated volume scan, that returns
         # contracts the caller never asked for, mislabeled under this category.
         # Surface the failure honestly instead.
         return {

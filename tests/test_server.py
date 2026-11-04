@@ -65,9 +65,11 @@ def test_every_tool_has_a_description():
 
 def test_server_instructions_document_the_provider_contract():
     instructions = server.INSTRUCTIONS
-    for value in ("BOTH", "TRADINGVIEW", "FINVIZ", "NONE"):
+    for value in ("ALL", "TRADINGVIEW", "FINVIZ", "YAHOO", "NONE"):
         assert value in instructions
     assert "single-source" in instructions.lower()
+    # ``ALL`` must be described as coverage, not as agreement.
+    assert "coverage" in instructions.lower()
 
 
 @pytest.mark.asyncio

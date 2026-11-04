@@ -1,45 +1,32 @@
-"""Thin, typed access to the TradingView provider's service layer.
+"""Thin, typed access to TradingView's own data.
 
-The provider layer returns several different shapes: the scanner-based
-screener, the Yahoo chart quote, and the technical-analysis engine. These
-helpers present the shapes the orchestration layer needs and convert provider
-exceptions into :class:`ProviderError` so the reconciler can label them.
+Every function here goes to TradingView. Nothing in this module delegates to
+Yahoo Finance or Finviz, the point of a third provider is that each leg is
+genuinely independent, and a leg that quietly proxies another one is worth
+nothing as a cross-check.
+
+Two upstreams are used:
+
+* ``scanner.tradingview.com`` for spot quotes, fundamentals and whole-market
+  screens (any asset class, one POST).
+* ``data.tradingview.com`` (chart websocket) for OHLCV history, which the
+  scanner does not expose.
 """
 from __future__ import annotations
 
 from typing import Any
 
+from .providers.tradingview import native
+from .providers.tradingview.core.services import screener_service, stock_screener_service
 from .providers_state import NoDataError, ProviderError
-from .providers.tradingview.core.services import (
-    screener_service,
-    stock_screener_service,
-    yahoo_finance_service,
-)
+from .ratelimit import RateLimited, RateLimitError
 
 PROVIDER = "TRADINGVIEW"
 
-#: Scanner columns requested for the dual-source quote leg.
-_QUOTE_COLUMNS = (
-    "name",
-    "description",
-    "close",
-    "change",
-    "volume",
-    "market_cap_basic",
-    "price_earnings_ttm",
-    "earnings_per_share_basic_ttm",
-    "dividends_yield_current",
-    "sector",
-    "industry",
-    "price_52_week_high",
-    "price_52_week_low",
-    "beta_1_year",
-    "relative_volume_10d_calc",
-    "RSI",
-    "ATR",
-    "earnings_release_next_date",
-)
+#: Scanner columns the quote compares on.
+_QUOTE_COLUMNS = native.QUOTE_COLUMNS
 
+#: Narrower column set for bulk price lookups.
 _PRICE_COLUMNS = (
     "name",
     "description",
@@ -47,11 +34,20 @@ _PRICE_COLUMNS = (
     "change",
     "volume",
     "currency",
+    "update_time",
     "market_cap_basic",
 )
 
 
 def _raise_provider_error(exc: BaseException, context: str) -> None:
+    if isinstance(exc, native.SymbolNotFound):
+        raise NoDataError(PROVIDER, str(exc)) from exc
+    if isinstance(exc, (RateLimited, RateLimitError)):
+        raise ProviderError(
+            PROVIDER,
+            f"{context}: TradingView is rate limiting this server; retry later",
+            code="UPSTREAM_RATE_LIMIT",
+        ) from exc
     raise ProviderError(
         PROVIDER,
         f"{context}: {type(exc).__name__}: {exc}",
@@ -59,104 +55,80 @@ def _raise_provider_error(exc: BaseException, context: str) -> None:
     ) from exc
 
 
-def _scan(tickers: list[str], columns: tuple[str, ...]) -> list[dict[str, Any]]:
-    from tradingview_screener import Query
+async def quote(ticker: str) -> dict[str, Any]:
+    """Scanner quote for one ``EXCHANGE:SYMBOL`` ticker.
 
-    try:
-        _total, frame = (
-            Query()
-            .set_tickers(*tickers)
-            .select(*columns)
-            .limit(len(tickers))
-            .get_scanner_data(timeout=25)
-        )
-        return frame.to_dict("records")
-    except Exception as exc:  # noqa: BLE001
-        _raise_provider_error(exc, "TradingView scanner")
-
-
-def scanner_quote(symbol: str) -> dict[str, Any]:
-    """Scanner-backed quote for one symbol; raises ``NoDataError`` if absent."""
-    candidates = [f"{venue}:{symbol}" for venue in ("NASDAQ", "NYSE", "AMEX")]
-    rows = _scan(candidates, _QUOTE_COLUMNS)
-    if not rows:
-        raise NoDataError(PROVIDER, f"no scanner row for {symbol}")
-    row = rows[0]
-    row.setdefault("ticker", candidates[0])
-    return row
-
-
-def scanner_metrics(symbol: str) -> dict[str, Any]:
-    """Scanner fundamentals (P/E, RSI, ATR, 52-week range) for one symbol.
-
-    Best-effort: returns ``{}`` when the scanner has no row, so the chart quote
-    can still stand on its own. This is what makes P/E and RSI genuinely
-    dual-sourced rather than Finviz-only.
+    ``ticker`` must already be a TradingView pair, use
+    :func:`tapebasis.symbols.resolve_tradingview` to get one.
     """
     try:
-        return scanner_quote(symbol)
-    except (NoDataError, ProviderError):
-        return {}
+        return await native.quote(ticker)
+    except (native.SymbolNotFound, NoDataError):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _raise_provider_error(exc, "scanner quote")
 
 
-def scanner_prices(tickers: list[str]) -> dict[str, dict[str, Any]]:
-    """Scanner-backed prices keyed by bare symbol."""
-    rows = _scan(tickers, _PRICE_COLUMNS)
-    found: dict[str, dict[str, Any]] = {}
+async def quotes(tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """Scanner rows for several tickers, keyed by bare symbol."""
+    try:
+        rows = await native.scan(tickers, columns=_PRICE_COLUMNS)
+    except Exception as exc:  # noqa: BLE001
+        _raise_provider_error(exc, "scanner bulk quote")
+    out: dict[str, dict[str, Any]] = {}
     for row in rows:
         name = str(row.get("name") or "").upper()
         if name:
-            found[name] = row
-    return found
+            out[name] = row
+    return out
 
 
-async def chart_quote(symbol: str) -> dict[str, Any]:
-    """Yahoo chart quote through the TradingView provider's quote engine."""
-    data = await yahoo_finance_service.get_price_async(symbol)
-    if not isinstance(data, dict) or data.get("error"):
-        message = (
-            (data or {}).get("error", "empty quote")
-            if isinstance(data, dict)
-            else "empty quote"
-        )
-        raise ProviderError(PROVIDER, f"quote failed: {message}", code="UPSTREAM_ERROR")
-    return data
-
-
-async def extended_hours(symbol: str) -> dict[str, Any]:
-    from .providers.tradingview.core.services.extended_hours_service import (
-        get_extended_hours_price_async,
-    )
-
-    data = await get_extended_hours_price_async(symbol)
-    if not isinstance(data, dict) or data.get("error"):
-        message = (
-            (data or {}).get("error", "empty response")
-            if isinstance(data, dict)
-            else "empty response"
-        )
-        raise ProviderError(
-            PROVIDER, f"extended-hours failed: {message}", code="UPSTREAM_ERROR"
-        )
-    return data
-
-
-def technical_analysis_sync(
-    symbol: str, exchange: str = "NASDAQ", timeframe: str = "1D"
+async def history(
+    ticker: str,
+    *,
+    period: str = "1y",
+    interval: str = "1d",
 ) -> dict[str, Any]:
-    """Run the provider's technical-analysis engine (blocking; call in a thread)."""
+    """OHLCV history straight from TradingView's chart feed."""
     try:
-        return screener_service.analyze_coin(
-            symbol, exchange=exchange, timeframe=timeframe
-        )
+        return await native.history(ticker, period=period, interval=interval)
+    except (native.SymbolNotFound, NoDataError):
+        raise
     except Exception as exc:  # noqa: BLE001
-        _raise_provider_error(exc, "technical analysis")
+        _raise_provider_error(exc, "chart history")
 
 
-def _offload(fn, /, **kwargs):
-    import asyncio
+async def history_candles(
+    ticker: str,
+    *,
+    period: str = "1y",
+    interval: str = "1d",
+) -> dict[str, Any]:
+    """TradingView history shaped as the backtest engine's candle list.
 
-    return asyncio.to_thread(fn, **kwargs)
+    The engine compares strings for trade dates and expects ascending bars, so
+    the epoch timestamps are rendered in the same format the engine's own
+    fallback uses (``%Y-%m-%d`` daily, ``%Y-%m-%d %H:%M`` intraday).
+    """
+    from datetime import datetime, timezone
+
+    payload = await history(ticker, period=period, interval=interval)
+    date_format = "%Y-%m-%d %H:%M" if interval.endswith("h") or interval.endswith("m") else "%Y-%m-%d"
+    candles = [
+        {
+            "date": datetime.fromtimestamp(bar["timestamp"], tz=timezone.utc).strftime(date_format),
+            "open": bar.get("open"),
+            "high": bar.get("high"),
+            "low": bar.get("low"),
+            "close": bar.get("close"),
+            "volume": bar.get("volume") or 0,
+        }
+        for bar in payload.get("bars") or []
+        if bar.get("close") is not None
+    ]
+    if not candles:
+        raise NoDataError(PROVIDER, f"TradingView returned no usable bars for {ticker}")
+    return {"candles": candles, "symbol": payload.get("symbol"), "source": "tradingview"}
 
 
 async def stock_screen(
@@ -167,59 +139,115 @@ async def stock_screen(
     exclude_otc: bool = True,
     sort_by: str = "market_cap",
 ) -> dict[str, Any]:
-    """Whole-market stock screen (TradingView scanner)."""
+    """Whole-market stock screen (TradingView scanner).
+
+    ``screen_stocks`` is a blocking scraper (pandas + requests), so it runs in a
+    worker thread. Awaiting it directly fails with ``object dict can't be used
+    in 'await' expression`` and silently demotes the whole screener to
+    Finviz-only, which is exactly what it did before this was fixed.
+    """
+    import asyncio
+
     try:
-        return await _offload(
+        return await asyncio.to_thread(
             stock_screener_service.screen_stocks,
             country=country,
             stock_type=stock_type,
             limit=limit,
             exclude_otc=exclude_otc,
-            compact=False,
             sort_by=sort_by,
         )
     except Exception as exc:  # noqa: BLE001
-        _raise_provider_error(exc, "stock screener")
+        _raise_provider_error(exc, "stock screen")
 
 
-async def market_snapshot() -> dict[str, Any]:
-    return await yahoo_finance_service.get_market_snapshot_async()
-
-
-async def options_chain(symbol: str, expiry: str | None = None) -> dict[str, Any]:
-    from .providers.tradingview.core.services.options_service import get_options_chain
-
-    data = await _offload(get_options_chain, symbol=symbol, expiry=expiry)
-    if isinstance(data, dict) and data.get("error"):
-        raise ProviderError(
-            PROVIDER, f"options chain failed: {data['error']}", code="UPSTREAM_ERROR"
-        )
-    return data
-
-
-async def market_news(
-    symbol: str | None, category: str = "stocks", limit: int = 30
+async def technical_analysis(
+    symbol: str, exchange: str = "NASDAQ", timeframe: str = "1D"
 ) -> dict[str, Any]:
+    """TradingView's technical-analysis engine for one symbol."""
+    import asyncio
+
+    try:
+        return await asyncio.to_thread(
+            screener_service.analyze_coin, symbol, exchange=exchange, timeframe=timeframe
+        )
+    except Exception as exc:  # noqa: BLE001
+        _raise_provider_error(exc, "technical analysis")
+
+
+async def news(symbol: str | None = None, *, limit: int = 20) -> dict[str, Any]:
+    """Headlines from the provider's licensed news feed.
+
+    Returns ``{"items": [...], "symbol": ...}``. Without
+    ``MARKETAUX_API_TOKEN`` the feed has nothing, which is reported as
+    ``NoDataError`` rather than as an empty success.
+    """
+    import asyncio
+
     from .providers.tradingview.core.services.marketaux_service import (
         fetch_news_summary,
     )
 
-    data = await _offload(
-        fetch_news_summary, symbol=symbol, category=category, limit=limit
-    )
-    if isinstance(data, dict) and data.get("error"):
-        raise ProviderError(
-            PROVIDER, f"news failed: {data['error']}", code="NOT_CONFIGURED"
-        )
+    data = await asyncio.to_thread(fetch_news_summary, symbol, limit=limit)
+    if not isinstance(data, dict):
+        raise ProviderError(PROVIDER, "news feed returned a non-dict payload")
+    if data.get("error"):
+        if "not configured" in str(data["error"]).lower():
+            raise NoDataError(PROVIDER, str(data["error"]))
+        raise ProviderError(PROVIDER, f"news failed: {data['error']}", code="UPSTREAM_ERROR")
+    if not data.get("items"):
+        raise NoDataError(PROVIDER, f"news feed has no headlines for {symbol}")
     return data
 
 
-def earnings_calendar(symbol: str) -> dict[str, Any]:
-    """Next/last earnings timestamp from the scanner."""
-    rows = _scan(
-        [f"{venue}:{symbol}" for venue in ("NASDAQ", "NYSE", "AMEX")],
-        ("name", "earnings_release_next_date", "earnings_release_date"),
-    )
-    if not rows:
-        raise NoDataError(PROVIDER, f"no earnings calendar row for {symbol}")
-    return rows[0]
+async def index_snapshot() -> dict[str, Any]:
+    """Level and day change for the major US indices, from the scanner."""
+    try:
+        return await native.index_snapshot()
+    except (native.SymbolNotFound, NoDataError):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _raise_provider_error(exc, "index snapshot")
+
+
+async def market_snapshot() -> dict[str, Any]:
+    """Broad snapshot (indices, crypto, FX, ETFs) from TradingView's scanner.
+
+    Exposed as its own access function because the composite tool calls it by
+    name: the missing wrapper used to surface as an ``AttributeError`` swallowed
+    by the reconciler, so ``market_snapshot`` reported Yahoo-only coverage with
+    TradingView silently absent.
+    """
+    try:
+        return await native.market_snapshot()
+    except (native.SymbolNotFound, NoDataError):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _raise_provider_error(exc, "market snapshot")
+
+
+async def earnings(symbol: str) -> dict[str, Any]:
+    """Next/last earnings timestamps from the scanner.
+
+    ``symbol`` may be a bare ticker or an ``EXCHANGE:SYMBOL`` pair; a bare
+    ticker is resolved through TradingView's own symbol search first so a
+    non-US listing is not silently looked for on NASDAQ.
+    """
+    from .symbols import resolve_tradingview
+
+    resolution = await resolve_tradingview(symbol, asset_class="stock")
+    if not resolution.found:
+        raise NoDataError(PROVIDER, resolution.note or f"no TradingView symbol for {symbol}")
+    try:
+        row = await native.quote(resolution.symbol)
+    except (native.SymbolNotFound, NoDataError):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _raise_provider_error(exc, "earnings calendar")
+    if row.get("earnings_release_next_date") is None and row.get("earnings_release_date") is None:
+        raise NoDataError(PROVIDER, f"scanner has no earnings dates for {resolution.symbol}")
+    return row
+
+
+def limiter_state() -> dict[str, Any]:
+    return native.limiter_state()

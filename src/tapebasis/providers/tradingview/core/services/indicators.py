@@ -36,7 +36,7 @@ def compute_bb_rating_signal(close: float, bb_upper: float, bb_middle: float, bb
         rating = -1
 
     # A close beyond the band (|rating| == 3) is the strongest reading this
-    # measure produces — it must stay on its own side, never fall back to
+    # measure produces, it must stay on its own side, never fall back to
     # NEUTRAL (a breakout day previously read as a downgrade in signal_change).
     signal = "NEUTRAL"
     if rating >= 2:
@@ -217,7 +217,7 @@ def extract_extended_indicators(indicators: Dict) -> Dict:
     atr = {
         "value": _safe_round(atr_value, 4),
         "percent_of_price": _safe_round(atr_pct, 2),
-        # Missing ATR is "Unknown", not "Low" — asserting calm markets on
+        # Missing ATR is "Unknown", not "Low", asserting calm markets on
         # absent data misleads downstream risk sizing.
         "volatility": (
             "Unknown" if atr_pct is None
@@ -829,7 +829,7 @@ def analyze_timeframe_context(indicators: Dict, timeframe: str) -> Dict:
 
 
 # ---------------------------------------------------------------------------
-# LAYER A — Stock Quality & Momentum Score (100 pts)
+# LAYER A, Stock Quality & Momentum Score (100 pts)
 # Answers: "Which stocks deserve attention?"
 # ---------------------------------------------------------------------------
 
@@ -837,10 +837,10 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     """Compute a 100-point composite stock score for ranking.
 
     Sections:
-      A. Trend & Momentum  — 50 pts (EMA structure, RSI, MACD, relative perf)
-      B. Confirmation       — 20 pts (Volume, ADX)
-      C. Risk-Adjusted      — 15 pts (ATR volatility, drawdown proxy)
-      D. Fundamental Overlay— 15 pts (TV recommendation as proxy)
+      A. Trend & Momentum: 50 pts (EMA structure, RSI, MACD, relative perf)
+      B. Confirmation      : 20 pts (Volume, ADX)
+      C. Risk-Adjusted     : 15 pts (ATR volatility, drawdown proxy)
+      D. Fundamental Overlay, 15 pts (TV recommendation as proxy)
 
     Args:
         indicators: TradingView indicator dict.
@@ -860,9 +860,9 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     penalties = []
     total = 0
 
-    # ── A. Trend & Momentum — 50 pts ──────────────────────────────────────
+    # ── A. Trend & Momentum, 50 pts ──────────────────────────────────────
 
-    # A1. EMA Trend Structure — 15 pts
+    # A1. EMA Trend Structure, 15 pts
     ema20 = indicators.get("EMA20")
     ema50 = indicators.get("EMA50")
     ema200 = indicators.get("EMA200")
@@ -886,7 +886,7 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["ema_trend"] = ema_pts
     total += ema_pts
 
-    # A2. RSI Strength Zone — 10 pts
+    # A2. RSI Strength Zone, 10 pts
     rsi = indicators.get("RSI")
     rsi_pts = 0
     if rsi is not None:
@@ -905,7 +905,7 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["rsi"] = rsi_pts
     total += rsi_pts
 
-    # A3. MACD Confirmation — 10 pts
+    # A3. MACD Confirmation, 10 pts
     macd_line = indicators.get("MACD.macd")
     macd_signal = indicators.get("MACD.signal")
     macd_pts = 0
@@ -924,7 +924,7 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["macd"] = macd_pts
     total += macd_pts
 
-    # A4. Relative Price Performance — 15 pts
+    # A4. Relative Price Performance, 15 pts
     perf_pts = 0
     if change_pct_rank is not None:
         if change_pct_rank >= 0.90:
@@ -942,9 +942,9 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["relative_performance"] = perf_pts
     total += perf_pts
 
-    # ── B. Confirmation — 20 pts ──────────────────────────────────────────
+    # ── B. Confirmation, 20 pts ──────────────────────────────────────────
 
-    # B5. Volume Confirmation — 10 pts
+    # B5. Volume Confirmation, 10 pts
     volume = indicators.get("volume")
     vol_pts = 0
     vol_ratio = indicators.get(RELATIVE_VOLUME) if volume else None
@@ -961,7 +961,7 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["volume_confirmation"] = vol_pts
     total += vol_pts
 
-    # B6. ADX Trend Strength — 10 pts
+    # B6. ADX Trend Strength, 10 pts
     adx = indicators.get("ADX")
     adx_plus = indicators.get("ADX+DI")
     adx_minus = indicators.get("ADX-DI")
@@ -979,9 +979,9 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["adx"] = adx_pts
     total += adx_pts
 
-    # ── C. Risk-Adjusted Technical Quality — 15 pts ───────────────────────
+    # ── C. Risk-Adjusted Technical Quality, 15 pts ───────────────────────
 
-    # C7. Volatility Control (ATR%) — 10 pts
+    # C7. Volatility Control (ATR%), 10 pts
     atr_val = indicators.get("ATR")
     atr_pct = (atr_val / close) * 100 if atr_val and close > 0 else None
     vol_ctrl_pts = 0
@@ -1000,7 +1000,7 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["volatility_control"] = vol_ctrl_pts
     total += vol_ctrl_pts
 
-    # C8. Drawdown Stability proxy — 5 pts
+    # C8. Drawdown Stability proxy, 5 pts
     # We don't have 60-day history, so approximate via:
     #   distance from 200-EMA and BB width as stability proxies
     stab_pts = 0
@@ -1026,7 +1026,7 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["drawdown_stability"] = stab_pts
     total += stab_pts
 
-    # ── D. Fundamental Overlay — 15 pts ───────────────────────────────────
+    # ── D. Fundamental Overlay, 15 pts ───────────────────────────────────
     # TradingView doesn't provide EPS/revenue directly.
     # Use TradingView's built-in recommendation as a proxy for quality.
 
@@ -1034,7 +1034,7 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     rec_ma = indicators.get("Recommend.MA")
     rec_other = indicators.get("Recommend.Other")
 
-    # D9. Growth Quality proxy (TV overall recommendation) — 10 pts
+    # D9. Growth Quality proxy (TV overall recommendation), 10 pts
     growth_pts = 0
     if rec_all is not None:
         if rec_all >= 0.5:
@@ -1049,7 +1049,7 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
     breakdown["growth_quality"] = growth_pts
     total += growth_pts
 
-    # D10. Profitability proxy (MA + Oscillator agreement) — 5 pts
+    # D10. Profitability proxy (MA + Oscillator agreement), 5 pts
     prof_pts = 0
     if rec_ma is not None and rec_other is not None:
         if rec_ma > 0.1 and rec_other > 0.1:
@@ -1140,10 +1140,10 @@ def compute_stock_score(indicators: Dict, change_pct_rank: Optional[float] = Non
             bonus -= 3
             penalties.append(f"Modest traded value {avg_value_20d:,.0f} {ccy}/day (-3)")
 
-    # Layer 3: Zero current volume — today is dead
+    # Layer 3: Zero current volume, today is dead
     if volume is not None and volume == 0:
         bonus -= 10
-        penalties.append("Zero volume today — no trading activity (-10)")
+        penalties.append("Zero volume today, no trading activity (-10)")
         liquidity_ok = False
         liquidity_cap = "Avoid"
         liquidity_warnings.append("zero trades today")
@@ -1291,7 +1291,7 @@ def compute_trade_setup(indicators: Dict) -> Optional[Dict]:
     # ── Per-scenario stop / targets / R:R ────────────────────────────────
     # Each scenario anchors everything to ITS OWN entry. (Previously the
     # stop and R:R were anchored to the close while the entry came from
-    # EMA20/resistance — on stocks trading far above their EMA20 that
+    # EMA20/resistance, on stocks trading far above their EMA20 that
     # produced plans whose entry sat BELOW the stop, and R:R numbers that
     # graded a trade nobody planned to take.)
 
@@ -1313,7 +1313,7 @@ def compute_trade_setup(indicators: Dict) -> Optional[Dict]:
             return None
 
         stop_pct = ((entry - stop) / entry) * 100
-        if stop_pct < 0.5:  # unrealistically tight — widen to 1 ATR
+        if stop_pct < 0.5:  # unrealistically tight, widen to 1 ATR
             stop = _safe_round(entry - 1.0 * atr, 2)
             if stop is None or stop >= entry or stop <= 0:
                 return None
@@ -1349,7 +1349,7 @@ def compute_trade_setup(indicators: Dict) -> Optional[Dict]:
         if sc:
             scenarios["breakout"] = sc
     if not scenarios:
-        # No S/R-derived entries — plan an at-market trade so callers still
+        # No S/R-derived entries, plan an at-market trade so callers still
         # get one coherent set of levels.
         sc = _build_scenario("market", close)
         if sc:
@@ -1406,7 +1406,7 @@ def compute_trade_setup(indicators: Dict) -> Optional[Dict]:
 
 
 # ---------------------------------------------------------------------------
-# LAYER C — Trade Quality Score (100 pts)
+# LAYER C, Trade Quality Score (100 pts)
 # Answers: "Is this setup actually tradable?"
 # ---------------------------------------------------------------------------
 
@@ -1414,11 +1414,11 @@ def compute_trade_quality(indicators: Dict, trade_setup: Dict) -> Dict:
     """Score the trade setup quality out of 100.
 
     Sections:
-      Structure Quality  — 30 pts
-      Risk/Reward        — 30 pts
-      Volume Confirmation— 20 pts
-      Stop Placement     — 10 pts
-      Liquidity          — 10 pts
+      Structure Quality: 30 pts
+      Risk/Reward       : 30 pts
+      Volume Confirmation, 20 pts
+      Stop Placement    : 10 pts
+      Liquidity         : 10 pts
     """
     close = indicators.get("close")
     ema20 = indicators.get("EMA20")
@@ -1433,7 +1433,7 @@ def compute_trade_quality(indicators: Dict, trade_setup: Dict) -> Dict:
     breakdown = {}
     notes = []
 
-    # ── Structure Quality — 30 pts ────────────────────────────────────────
+    # ── Structure Quality, 30 pts ────────────────────────────────────────
     struct_pts = 0
     # Clean trend
     if ema20 and ema50 and ema200 and close:
@@ -1459,7 +1459,7 @@ def compute_trade_quality(indicators: Dict, trade_setup: Dict) -> Dict:
     breakdown["structure_quality"] = min(30, struct_pts)
     total += breakdown["structure_quality"]
 
-    # ── Risk/Reward — 30 pts ──────────────────────────────────────────────
+    # ── Risk/Reward, 30 pts ──────────────────────────────────────────────
     rr2 = trade_setup.get("risk_reward", {}).get("to_target_2")
     rr_pts = 0
     if rr2 is not None:
@@ -1476,7 +1476,7 @@ def compute_trade_quality(indicators: Dict, trade_setup: Dict) -> Dict:
     breakdown["risk_reward"] = rr_pts
     total += rr_pts
 
-    # ── Volume Confirmation — 20 pts ──────────────────────────────────────
+    # ── Volume Confirmation, 20 pts ──────────────────────────────────────
     vol_pts = 0
     if volume and rel_volume is not None:
         if rel_volume >= 1.5:
@@ -1491,7 +1491,7 @@ def compute_trade_quality(indicators: Dict, trade_setup: Dict) -> Dict:
     breakdown["volume_confirmation"] = vol_pts
     total += vol_pts
 
-    # ── Stop Placement Quality — 10 pts ───────────────────────────────────
+    # ── Stop Placement Quality, 10 pts ───────────────────────────────────
     stop_pct = trade_setup.get("stop_distance_pct")
     stop_pts = 0
     if stop_pct is not None:
@@ -1503,14 +1503,14 @@ def compute_trade_quality(indicators: Dict, trade_setup: Dict) -> Dict:
             notes.append("Stop might be too tight")
         elif 5.0 < stop_pct <= 8.0:
             stop_pts = 5
-            notes.append("Wide stop — reduce position size")
+            notes.append("Wide stop, reduce position size")
         else:
             stop_pts = 0
             notes.append("Stop placement problematic")
     breakdown["stop_quality"] = stop_pts
     total += stop_pts
 
-    # ── Liquidity — 10 pts ────────────────────────────────────────────────
+    # ── Liquidity, 10 pts ────────────────────────────────────────────────
     liq_pts = 0
     if volume and avg_volume:
         # Use average volume as liquidity proxy
@@ -1522,7 +1522,7 @@ def compute_trade_quality(indicators: Dict, trade_setup: Dict) -> Dict:
             liq_pts = 4
         else:
             liq_pts = 0
-            notes.append("Low liquidity — harder to enter/exit")
+            notes.append("Low liquidity, harder to enter/exit")
     breakdown["liquidity"] = liq_pts
     total += liq_pts
 

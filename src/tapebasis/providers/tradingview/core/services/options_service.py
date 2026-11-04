@@ -4,7 +4,7 @@ Options chain + unusual activity service for US stocks.
 Why this exists: a paying user (active morning-prep options trader) asked for
 a way to spot institutional positioning before catalysts. The pattern they
 care about is "strikes where today's volume is multiples of standing open
-interest" — a classic V/OI > 1 signal that someone is opening size on a
+interest", a classic V/OI > 1 signal that someone is opening size on a
 specific strike in a specific direction.
 
 Manually pulling this for a watchlist is the kind of grunt work AI is
@@ -50,7 +50,7 @@ _UA = (
 # query2 for a crumb token, then attach `?crumb=...` to every request.
 _BASE = "https://query2.finance.yahoo.com/v7/finance/options"
 
-# Session cache: crumb tokens expire — re-handshake every ~25 minutes.
+# Session cache: crumb tokens expire, re-handshake every ~25 minutes.
 # The lock matters: tools run on worker threads, and Yahoo's crumb is bound to
 # the cookie jar it was issued against. Two interleaved handshakes could pair
 # one session's crumb with the other's cookies → persistent 401s.
@@ -87,7 +87,7 @@ def _get_session() -> tuple:
             return _SESSION_CACHE["crumb"], _SESSION_CACHE["opener"]
 
         opener = _new_session_opener()
-        # Cookie-drop step. Any HTTP status here is fine — we only need Set-Cookie.
+        # Cookie-drop step. Any HTTP status here is fine, we only need Set-Cookie.
         try:
             opener.open("https://fc.yahoo.com/", timeout=_TIMEOUT)
         except urllib.error.HTTPError:
@@ -264,8 +264,7 @@ def get_unusual_options_activity(
 ) -> dict:
     """Rank strikes by today's volume / standing open-interest ratio.
 
-    Flags strikes where today's volume is a large multiple of standing OI —
-    a classic "someone is opening size here" signal that's useful for
+    Flags strikes where today's volume is a large multiple of standing OI, a classic "someone is opening size here" signal that's useful for
     spotting institutional positioning before catalysts (earnings, FOMC,
     macro prints).
 
@@ -273,7 +272,7 @@ def get_unusual_options_activity(
         symbol: US stock symbol.
         top_n: Number of strikes to return, ranked by V/OI descending.
             Default 10.
-        min_volume: Filter floor for today's volume — drops illiquid
+        min_volume: Filter floor for today's volume, drops illiquid
             strikes whose ratios are noise. Default 100.
         expiries: How many of the soonest expirations to scan. Default 4
             (typically covers ~1 month of weeklies/monthlies).

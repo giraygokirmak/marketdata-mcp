@@ -1,5 +1,5 @@
 """
-News service — headlines from ``/api/news/quote/{ticker}``.
+News service, headlines from ``/api/news/quote/{ticker}``.
 
 That endpoint returns ``{"html": "<table rows>", "timestamp": "..."}``: the
 server renders the same 100-row table into JSON for the React island. Parsing

@@ -37,7 +37,7 @@ def test_parses_epoch_supplied_as_a_string():
 
 
 def test_parses_finviz_rendered_market_time():
-    """``Nov 03 • 3:59 PM ET`` — the string Finviz puts next to the price."""
+    """``Nov 03 • 3:59 PM ET``, the string Finviz puts next to the price."""
     parsed = parse_market_timestamp("Nov 03 • 3:59 PM ET", reference=REFERENCE)
     # 15:59 EST on 3 Nov 2026 is 20:59 UTC.
     assert parsed == datetime(2026, 11, 3, 20, 59, tzinfo=timezone.utc)
@@ -85,7 +85,7 @@ def test_rolls_back_a_year_when_the_source_omits_it():
 
 
 @pytest.mark.parametrize(
-    "raw", [None, "", "   ", "not a date", "—", "Closed", [], {}]
+    "raw", [None, "", "   ", "not a date", ", ", "Closed", [], {}]
 )
 def test_unparseable_input_returns_none_instead_of_raising(raw):
     """A provider changing its date rendering must degrade, not crash."""
@@ -147,8 +147,8 @@ def test_single_value_is_returned_and_both_readings_are_kept():
         fv_time="2026-11-03T20:59:00+00:00",
     )
     assert merged.data["price"] == 331.0  # the fresher (TradingView) value
-    assert merged.comparisons[0]["tv"] == 331.0
-    assert merged.comparisons[0]["fv"] == 340.0
+    assert merged.comparisons[0]["values"][TRADINGVIEW] == 331.0
+    assert merged.comparisons[0]["values"][FINVIZ] == 340.0
     assert "price" in merged.mismatches  # 2.7 % is well outside 0.5 %
     assert merged.comparisons[0]["match"] is False
 
@@ -166,7 +166,8 @@ def test_a_within_tolerance_disagreement_is_not_a_mismatch():
 def test_without_timestamps_finviz_remains_the_documented_default():
     merged = merge({"price": 1.0}, {"price": 1.0}, _specs())
     assert merged.chosen == FINVIZ
-    assert "documented default" in merged.freshness["reason"]
+    assert merged.freshness["decision"] == "no_timestamp"
+    assert "documented order" in merged.freshness["reason"]
 
 
 def test_identical_timestamps_fall_back_to_finviz_deterministically():
@@ -254,7 +255,7 @@ def test_finviz_float32_noise_is_rounded_before_it_can_be_displayed():
 
 
 def test_rounding_keeps_precision_needed_for_greeks_and_percentages():
-    """6 significant digits — plenty for a delta, unlike a fixed 2 places."""
+    """6 significant digits, plenty for a delta, unlike a fixed 2 places."""
     from tapebasis.fv_access import _round_floats
 
     assert _round_floats({"delta": -0.0028611675})["delta"] == -0.00286117

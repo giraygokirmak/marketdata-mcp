@@ -16,7 +16,7 @@ from threading import RLock as _RLock, Semaphore as _Semaphore, Lock as _Lock
 # explicit timeout, so when scanner.tradingview.com opens a connection then
 # stops sending bytes, calls hang INDEFINITELY. The retry layer can't fire
 # because no exception is ever raised. Set socket default timeout so any
-# stalled HTTP call fails with socket.timeout within a bounded window — the
+# stalled HTTP call fails with socket.timeout within a bounded window, the
 # retry layer then catches it (TimeoutError is now treated as transient).
 #
 # Tunable: TRADINGVIEW_MCP_SOCKET_TIMEOUT (default 20 seconds).
@@ -96,7 +96,7 @@ _give_each_analysis_its_own_indicators()
 #   storms (the 5-stock parallel batch failure mode).
 # - Added stale-while-error cache: on full retry exhaustion, return the most
 #   recent successful result (up to TRADINGVIEW_MCP_STALE_TTL=6h old).
-#   This is the primary defense against deep outages — for repeat queries
+#   This is the primary defense against deep outages, for repeat queries
 #   we always serve from cache rather than burn long retries.
 # - Final terminal error now includes attempt count, total wait, and an
 #   explicit "wait N seconds before retry" suggestion (no more bare
@@ -110,8 +110,8 @@ _give_each_analysis_its_own_indicators()
 # the 6h stale cache to serve previously-seen symbols.
 #
 # Tunables (env vars):
-#   TRADINGVIEW_MCP_CACHE_TTL    default 60   (seconds — fresh cache)
-#   TRADINGVIEW_MCP_STALE_TTL    default 21600 (6 hours — fallback cache)
+#   TRADINGVIEW_MCP_CACHE_TTL    default 60   (seconds, fresh cache)
+#   TRADINGVIEW_MCP_STALE_TTL    default 21600 (6 hours, fallback cache)
 #   TRADINGVIEW_MCP_RETRY_DELAYS default "1.0,4.0"
 #   TRADINGVIEW_MCP_RETRY_JITTER default 0.2  (±20% jitter on each delay)
 #   TRADINGVIEW_MCP_FAILURE_COOLDOWN_S default 15 (seconds)
@@ -159,8 +159,7 @@ def _jittered(delay: float) -> float:
 
 # --- Shared failure cooldown (added 2026-05-19) ---------------------------
 # When a call exhausts all retries (sustained upstream outage), the next
-# call shouldn't immediately re-hammer with another full retry round —
-# that just compounds load on a struggling upstream. After a full-retry
+# call shouldn't immediately re-hammer with another full retry round, # that just compounds load on a struggling upstream. After a full-retry
 # failure, subsequent calls wait up to TRADINGVIEW_MCP_FAILURE_COOLDOWN_S
 # seconds before starting their own retry sequence, giving upstream room
 # to recover. The cooldown decays as time passes since last failure.
@@ -225,7 +224,7 @@ def _cache_get(key: Tuple):
             return None
         ts, payload = entry
         if _time.time() - ts > ttl:
-            # Don't pop here — stale lookup below may still want it.
+            # Don't pop here, stale lookup below may still want it.
             return None
         return payload
 
@@ -363,7 +362,7 @@ def humanize_upstream_error(exc: BaseException) -> str:
     if msg.startswith("Upstream TradingView scanner returned transient"):
         return msg  # already our clean terminal message
     if _is_transient_screener_error(exc):
-        return "TradingView data is temporarily unavailable — please retry in a moment."
+        return "TradingView data is temporarily unavailable, please retry in a moment."
     return msg
 
 
@@ -379,7 +378,7 @@ def _scan_with_retry(
     Re-raises on non-transient errors or on final failure.
 
     If ``cache_key`` is provided and all retries fail, attempts to return a
-    stale-but-usable cached payload before raising — callers that pass a key
+    stale-but-usable cached payload before raising, callers that pass a key
     get stale-while-error behavior automatically.
 
     ``throttle`` holds a tradingview_ta throttle slot for each attempt (not
@@ -405,7 +404,7 @@ def _scan_with_retry(
             finally:
                 if throttle:
                     _ta_throttle_release()
-            # Populate the cache on success — without this, the advertised
+            # Populate the cache on success, without this, the advertised
             # stale-while-error fallback below could NEVER fire for callers
             # passing cache_key (nothing was ever stored under it).
             if cache_key is not None:
@@ -424,7 +423,7 @@ def _scan_with_retry(
             except Exception:
                 pass
             continue
-    # All attempts exhausted — record failure so subsequent calls back off
+    # All attempts exhausted, record failure so subsequent calls back off
     _record_ta_failure()
     # Last-resort: stale-while-error fallback if we have a cache key
     if cache_key is not None:
@@ -510,7 +509,7 @@ def resilient_get_multiple_analysis(screener, interval, symbols):
             except Exception:
                 pass
             continue
-    # All attempts exhausted — record failure so subsequent calls back off
+    # All attempts exhausted, record failure so subsequent calls back off
     _record_ta_failure()
     # Last-resort: stale-while-error fallback (up to TRADINGVIEW_MCP_STALE_TTL)
     stale = _cache_get_stale(cache_key)
@@ -702,14 +701,14 @@ def fetch_atr_for_tickers(
     """Batch-fetch ATR(14) for many tickers in a single scanner POST.
 
     Same workaround as :func:`fetch_atr_for_ticker` but issues one HTTP request
-    for all tickers — important for callers like ``analyze_egx_index`` which
+    for all tickers, important for callers like ``analyze_egx_index`` which
     process 200-symbol batches and cannot afford a fan-out of N requests.
 
     Args:
         tickers:          Fully-qualified TradingView symbols
                           (e.g. ``["EGX:COMI", "EGX:HRHO"]``). Empty list → ``{}``.
         screener_market:  Scanner market path segment (``"crypto"``, ``"egypt"``,
-                          ``"america"``, …) — the same value passed as
+                          ``"america"``, …), the same value passed as
                           ``screener`` to ``tradingview_ta``.
         timeframe:        Optional timeframe (``5m``, ``15m``, ``1h``, ``4h``,
                           ``1D``, ``1W``, ``1M``). When omitted the daily ATR is
@@ -743,7 +742,7 @@ def fetch_atr_for_tickers(
         resp = requests.post(url, json=payload, timeout=timeout)
         resp.raise_for_status()
         body = resp.json()
-    except Exception:  # noqa: BLE001 — graceful degrade
+    except Exception:  # noqa: BLE001, graceful degrade
         return {t: None for t in tickers}
 
     rows = body.get("data") if isinstance(body, dict) else None

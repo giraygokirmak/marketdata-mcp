@@ -8,19 +8,19 @@ readable.
 
 Anchor notes (as of the redesign captured for this server)
 ----------------------------------------------------------
-* ``div.quote-header``           — ticker, company, last/after-hours price,
+* ``div.quote-header``          : ticker, company, last/after-hours price,
                                    sector/industry/country/cap/exchange chips.
-* ``table.js-snapshot-table``    — the 84-field fundamentals snapshot, split
+* ``table.js-snapshot-table``   : the 84-field fundamentals snapshot, split
                                    across 6 tables on one page. Each row holds
                                    label/value ``<td>`` pairs; the label cell
                                    carries ``data-boxover-html`` with the
                                    human-readable metric description.
-* ``div.quote_profile-bio``      — company description paragraph.
-* ``table.fullview-links``       — the Peers row; each peer is a
+* ``div.quote_profile-bio``     : company description paragraph.
+* ``table.fullview-links``      : the Peers row; each peer is a
                                    ``span[data-boxover-ticker]``.
-* ``table.news-table``           — 100-row headline table (also returned by
+* ``table.news-table``          : 100-row headline table (also returned by
                                    ``/api/news/quote/{t}`` as ``{"html": ...}``).
-* ``table.styled-table-new``     — insider trading rows (9 columns).
+* ``table.styled-table-new``    : insider trading rows (9 columns).
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def extract_script_json(html: str, script_id: str) -> Optional[Any]:
 
     Finviz suffixes repeat blocks with an index (``route-init-data``,
     ``fa-init-data-0``), so the match is a *prefix* match on the id. Returns
-    ``None`` when the block is absent or holds invalid JSON — callers decide
+    ``None`` when the block is absent or holds invalid JSON; callers decide
     whether that is fatal.
     """
     pattern = re.compile(
@@ -305,7 +305,7 @@ def parse_news_rows(markup: str) -> list[dict[str, Any]]:
     """Parse news ``<tr>`` rows into headlines with day/next-day reactions.
 
     ``markup`` is either the full page or just the ``{"html": ...}`` body from
-    ``/api/news/quote/{t}`` — both contain the same row structure.
+    ``/api/news/quote/{t}``; both contain the same row structure.
     """
     rows: list[dict[str, Any]] = []
     for row in re.findall(r"<tr[^>]*>.*?</tr>", markup, re.S):

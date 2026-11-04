@@ -34,7 +34,7 @@ stdio is the default transport. The client spawns the process and talks over std
     "tapebasis": {
       "command": "/absolute/path/to/.venv/bin/tapebasis",
       "env": {
-        "MARKETAUX_API_TOKEN": ""     // optional; leave empty to use local scoring
+        "MARKETAUX_API_TOKEN": "",     // optional; leave empty to use local scoring
       }
     }
   }
@@ -56,64 +56,110 @@ tapebasis streamable-http --host 0.0.0.0 --port 8000
 
 Endpoints:
 
-- `POST/GET /mcp` — the MCP streamable-HTTP endpoint
-- `GET /health` — cached health verdict, no upstream call (safe for container healthchecks)
+- `POST/GET /mcp`: the MCP streamable-HTTP endpoint
+- `GET /health`: cached health verdict plus per-provider rate-limit state, no upstream call (safe for
+  container healthchecks)
 
 ```bash
 curl -s localhost:8000/health | python -m json.tool
 ```
 
-Bind to `127.0.0.1` unless you are behind a proxy or on a private network. The server has no
-authentication of its own.
+Bind to `127.0.0.1` unless you are behind a private network. The server has no authentication of its
+own.
 
 ## First calls
 
 ```
-stock_quote("AAPL")
-market_indices()
+stock_quote("AAPL")            # every provider that carries it
+stock_quote("XAUUSD")          # gold: TradingView only, labelled as such
+market_indices()               # S&P 500, Dow, Nasdaq, Russell 2000, VIX
 stock_news("NVDA")
-market_sentiment("TSLA")        # works with no API key
-tapebasis_health()             # upstream drift/outage status
-tapebasis_tool_map()           # what is dual-sourced, before calling anything
+market_sentiment("TSLA")       # works with no API key
+tapebasis_health()             # upstream drift/outage + rate-limit state
+tapebasis_tool_map()           # what is multi-sourced, before calling anything
 ```
 
 ## Reading your first response
 
 ```jsonc
 {
-  "data_provider": "BOTH",
-  "verification": "VERIFIED",
-  "notice": "Data came from BOTH providers (TradingView and Finviz) and the values agree — cross-verified.",
-  "data": { "price": 331.9, "previous_close": 338.32, ... },
-  "fields": { "price": "BOTH", "peers": "FINVIZ" },
+  "data_provider": "ALL",
+  "verification": "MULTI_SOURCE",
+  "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO"],
+  "notice": "Every provider asked answered (TradingView, Finviz and Yahoo Finance). Coverage is ALL; agreement is a separate axis. Compared fields agree within tolerance. The value shown is FINVIZ's because it printed more recently than the other providers'.",
+  "data": { "price": 332.33, "previous_close": 331.9, ... },
+  "fields": { "price": "ALL", "peers": "FINVIZ" },
   "freshness": {
-    "tradingview": "2026-11-03T21:00:01+00:00",
-    "finviz": "2026-11-03T20:59:00+00:00",
-    "chosen": "TRADINGVIEW",
-    "reason": "newest market print timestamp"
+    "tradingview": "2026-11-04T00:59:53+00:00",
+    "finviz": "2026-11-04T10:42:00+00:00",
+    "yahoo": "2026-11-03T21:00:01+00:00",
+    "chosen": "FINVIZ",
+    "decision": "newest",
+    "newest_print": "2026-11-04T10:42:00+00:00"
   },
   "comparisons": [
-    { "field": "price", "tv": 331.9, "fv": 331.9, "match": true, "diff_pct": 0.0 }
+    { "field": "price", "match": true,
+      "values": { "TRADINGVIEW": 331.9, "FINVIZ": 332.33, "YAHOO": 331.9 },
+      "diff_pct": 0.1294 }
   ],
-  "warnings": [],
+  "resolutions": {
+    "TRADINGVIEW": { "symbol": "NASDAQ:AAPL", "method": "search" },
+    "FINVIZ": { "symbol": "AAPL", "method": "normalise" },
+    "YAHOO": { "symbol": "AAPL", "method": "alias" }
+  },
+  "warnings": [
+    "Not cross-checked (providers' prints belong to different sessions): change_percent, previous_close, volume"
+  ],
   "degraded": false
 }
 ```
 
-Four things to notice:
+Five things to notice:
 
-1. `data_provider` is `BOTH` — safe to quote.
-2. `data.price` is **one** number. `freshness` explains where it came from: TradingView printed at
-   `21:00:01Z`, Finviz at `20:59Z`, so the newer reading won.
+1. `data_provider` is `ALL` and `providers_answered` names all three: every provider asked answered.
+2. `data.price` is **one** number. `freshness` explains where it came from: Finviz printed at
+   `10:42Z`, TradingView at `00:59:53Z`, Yahoo at `21:00:01Z`, so the newest reading won. All three
+   raw prices are still in `comparisons`.
 3. `fields` shows `peers` came from Finviz alone. Per-field provenance, not a blanket claim.
-4. `comparisons` holds both raw readings. `diff_pct: 0.0` is the actual measured gap.
+4. The `warnings` entry is not an error: Finviz is mid-session while the others are at the prior
+   close, so the session-relative fields (day change, previous close, volume) were **not** compared.
+   Reporting that is more honest than calling it a conflict, or silently implying agreement.
+5. `resolutions` shows the ticker each provider was asked for. This is where a symbol surprise
+   becomes explicable.
 
-If `data_provider` were `TRADINGVIEW` or `FINVIZ`, the notice would say the data is
-**not cross-verified** and an agent must relay that.
+If `data_provider` were `TRADINGVIEW`, `FINVIZ` or `YAHOO`, the notice would say the data is
+**not corroborated** and an agent must relay that.
+
+## A single-source instrument
+
+```
+stock_quote("XAUUSD")
+```
+
+```jsonc
+{
+  "data_provider": "TRADINGVIEW",
+  "verification": "SINGLE_SOURCE",
+  "providers_answered": ["TRADINGVIEW"],
+  "notice": "Data came from TRADINGVIEW only. The other providers did not supply this field, so the value is single-source and NOT corroborated.",
+  "data": { "price": 4042.04, ... },
+  "resolutions": {
+    "TRADINGVIEW": { "symbol": "OANDA:XAUUSD", "method": "search" },
+    "FINVIZ": { "symbol": null, "note": "Finviz carries US equities/ETFs only" },
+    "YAHOO": { "symbol": null, "note": "Yahoo Finance has no spot gold pair; its nearest series is COMEX gold futures (GC=F), a different instrument, not substituted." }
+  },
+  "errors": []
+}
+```
+
+Gold is a good demonstration of the rules: the data is served rather than withheld, and the label
+says it is single-source. `errors` is empty because no provider *failed*: two simply do not carry
+spot gold, and Yahoo's note refuses to substitute a futures contract for a spot pair. A different
+instrument at a different price is not the same quote.
 
 ## Next
 
-- [Response Contract](Response-Contract) — every field explained
-- [Tools Reference](Tools-Reference) — all 33 tools
-- [Configuration](Configuration) — environment variables
-- [Docker](Docker) — prebuilt GHCR image or a local build
+- [Response Contract](Response-Contract): every field explained
+- [Tools Reference](Tools-Reference): all 33 tools
+- [Configuration](Configuration): environment variables
+- [Docker](Docker): prebuilt GHCR image or a local build

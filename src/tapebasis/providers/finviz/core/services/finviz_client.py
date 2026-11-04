@@ -1,5 +1,5 @@
 """
-HTTP transport for the Finviz provider — one place that knows how to talk to finviz.com.
+HTTP transport for the Finviz provider, one place that knows how to talk to finviz.com.
 
 Why this module exists
 ----------------------
@@ -12,13 +12,13 @@ site's own React islands call, and they are undocumented and unversioned.
 So the transport has to behave like the site's own front end:
 
 * a real Chrome User-Agent (a bare ``python-httpx/x`` UA gets a Cloudflare
-  interstitial) — verified against finviz.com with plain urllib, so no browser
+  interstitial), verified against finviz.com with plain urllib, so no browser
   is required;
 * ``Accept: text/html`` for document routes and ``application/json`` for the
   API routes, because the CDN varies on them;
 * ``follow_redirects`` because ``/chart.ashx`` 302s to
   ``charts2-node.finviz.com`` and ``/screener.ashx`` → ``/screener/stocks``;
-* retries on 429/5xx only — a 404 means "no such tab for this ticker" and
+* retries on 429/5xx only: a 404 means "no such tab for this ticker" and
   retrying it just burns rate limit.
 
 Caching
@@ -105,7 +105,7 @@ class _TTLCache:
     async def set(self, key: str, body: Any, ttl: float) -> None:
         async with self._lock:
             if len(self._data) >= self._max_entries:
-                # Drop the entry with the earliest expiry — cheap, good enough.
+                # Drop the entry with the earliest expiry, cheap, good enough.
                 oldest = min(self._data, key=lambda k: self._data[k].expires_at)
                 self._data.pop(oldest, None)
             self._data[key] = CacheEntry(body=body, expires_at=time.monotonic() + ttl)
@@ -243,7 +243,7 @@ async def fetch_text(
                 raise FinvizServiceError(
                     ErrorCode.UPSTREAM_BLOCKED,
                     "finviz.com served a Cloudflare challenge instead of data; "
-                    "retry later — the challenge is usually temporary",
+                    "retry later; the challenge is usually temporary",
                     retryable=True,
                     url=url,
                 )

@@ -12,7 +12,7 @@ Neither the fetch time nor ``generated_at`` is a substitute: a quote fetched
 now can carry yesterday's close, and the whole point of picking the fresher
 reading is to avoid treating a stale price as current.
 
-Parsing is deliberately forgiving — a provider tweaking its date rendering
+Parsing is deliberately forgiving: a provider tweaking its date rendering
 should degrade to "timestamp unknown" (and therefore "no freshness
 arbitration"), never to an exception or a wrong ordering.
 """
@@ -51,7 +51,7 @@ _TIME_ONLY = re.compile(
     re.I,
 )
 
-#: ``20261103`` — Finviz's indices island uses a bare date.
+#: ``20261103``, Finviz's indices island uses a bare date.
 _COMPACT_DATE = re.compile(r"^(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})$")
 
 
@@ -83,7 +83,7 @@ def parse_market_timestamp(
     """Parse a provider timestamp into an aware UTC datetime.
 
     Accepts epoch seconds/strings, ISO-8601, and the human strings Finviz
-    renders (``"Nov 03 • 3:59 PM ET"``). Returns ``None`` — never raises — when
+    renders (``"Nov 03 • 3:59 PM ET"``). Returns ``None`` (never raises) when
     the value cannot be understood, which callers read as "freshness unknown".
 
     Args:

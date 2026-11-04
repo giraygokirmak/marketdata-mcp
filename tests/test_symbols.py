@@ -72,7 +72,7 @@ def test_canonical_index(symbol, canonical):
 
 
 def test_russel_index_and_etf_are_not_aliased():
-    """^RUT is the index; IWM is the tracking ETF — different price levels."""
+    """^RUT is the index; IWM is the tracking ETF, different price levels."""
     assert canonical_index("^RUT") == "RUT"
     assert canonical_index("IWM") == "IWM"
     assert INDEX_ALIASES["RUT"]["finviz"] is None

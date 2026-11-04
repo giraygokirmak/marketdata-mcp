@@ -15,25 +15,31 @@
       │              health_state.json  (baselines + last verdicts)
       │
       ▼
-  reconcile.ask()  ──►  asyncio.gather(tv_fn, fv_fn)   both in parallel, never raises
-      │
-      ├──► tv_access ──► providers/tradingview ──► scanner.tradingview.com
-      │                                          └► query1.finance.yahoo.com
-      └──► fv_access ──► providers/finviz ───────► finviz.com (HTML + /api/*)
+  symbols.resolve()  ──►  one ticker per provider, cached 1 h
       │
       ▼
-  Pair(tv=Attempt, fv=Attempt)
+  reconcile.ask(tv_fn, fv_fn, yh_fn)  ──►  asyncio.gather, never raises
+      │
+      ├──► tv_access ──► providers/tradingview/native ──► scanner.tradingview.com
+      │                                              └──► data.tradingview.com (ws)
+      ├──► fv_access ──► providers/finviz ─────────────► finviz.com (HTML + /api/*)
+      └──► yh_access ──► Yahoo chart API ──────────────► query1.finance.yahoo.com
+      │
+      │  every request above goes through ratelimit.limiter(PROVIDER)
+      ▼
+  Pair(tv=Attempt, fv=Attempt, yh=Attempt)
       │
       ▼
-  reconcile.finalize() ──► merge() ──► comparisons + per-field fields
-                              │  freshness.py decides which reading resolves
+  reconcile.finalize() ──► merge_many() ──► comparisons + per-field fields
+                              │  freshness decides which reading resolves
       │
       ▼
   providers_state.envelope()
       │
       ▼
-  {data_provider, verification, notice, data, fields, comparisons,
-   sources, errors, warnings, degraded, generated_at}
+  {data_provider, verification, providers_answered, notice, data, fields,
+   comparisons, freshness, resolutions, sources, errors, warnings,
+   degraded, generated_at}
 ```
 
 ## Modules
@@ -42,30 +48,53 @@
 src/tapebasis/
 ├── server.py             FastMCP instance, lifespan, /health, CLI, MCP instructions
 ├── providers_state.py    DataProvider / Verification enums, error types, envelope()
-├── reconcile.py          concurrent fan-out, field comparison, fallback, notice text
+├── reconcile.py          concurrent fan-out, field comparison, freshness arbitration, notice text
 ├── freshness.py          market-print timestamps + freshest-print selection
+├── ratelimit.py          per-provider pacing, shared cooldown, TTL cache
 ├── merge_helpers.py      pure payload shapers (raw provider dict → normalised fields)
 ├── sentiment.py          token-free headline scoring (VADER + finance lexicon)
-├── symbols.py            BRK-B ↔ BRK.B, ^GSPC ↔ SPX, index/ETF separation
+├── symbols.py            dynamic per-provider symbol resolution, index aliases
 ├── health.py             upstream probes, fingerprints, drift state, background loop
-├── tv_access.py          typed access to the TradingView provider
+├── tv_access.py          typed access to TradingView's own data
 ├── fv_access.py          typed access to the Finviz provider
+├── yh_access.py          typed access to the Yahoo Finance provider
 ├── catalog.py            plain-data tool catalogue (providers + comparison strategy)
-├── tools_market.py       the 9 dual-source tools
-├── tools_finviz.py       the 8 Finviz-only tools
-├── tools_tradingview.py  the 14 TradingView-only tools + combined_analysis
+├── tools_market.py       the 9 multi-source market tools
+├── tools_finviz.py       the 7 Finviz-only tools
+├── tools_tradingview.py  TradingView-only tools + combined_analysis
 ├── tools_health.py       tapebasis_health + tapebasis_tool_map
 └── providers/
-    ├── tradingview/      provider layer (scanner, Yahoo quote, TA, backtest, …)
+    ├── tradingview/      provider layer (scanner, chart ws, TA, backtest, …)
+    │   └── native.py     TradingView-only scanner + websocket client
     └── finviz/           provider layer (quote HTML, screener, ownership, …)
 ```
 
 ## Why the layering looks like this
 
+### Three independent legs, no proxying
+
+Cross-verification is only meaningful if the sources are independent. So each provider has its own
+access module and its own upstream:
+
+| Leg | Access module | Upstream |
+| --- | --- | --- |
+| TradingView | `tv_access.py` → `providers/tradingview/native.py` | `scanner.tradingview.com` (quotes, screener), `data.tradingview.com` (chart websocket for OHLCV) |
+| Finviz | `fv_access.py` | `finviz.com` HTML pages and `/api/*` JSON islands |
+| Yahoo Finance | `yh_access.py` | `query1.finance.yahoo.com/v8/finance/chart` |
+
+An earlier version of this server had TradingView's price come from Yahoo's chart API. That made the
+two legs the same upstream wearing different labels: a comparison that could only ever agree. The
+legs are now genuinely distinct, and `sources` names the upstream each one actually called.
+
+`native.py` exists because TradingView's scanner and its chart websocket are the only two
+TradingView-native interfaces available without a key. Quotes, fundamentals, whole-market screens and
+index snapshots come from one scanner POST; OHLCV history, which the scanner does not expose, comes
+from the websocket.
+
 ### `providers/` is kept as an isolated layer
 
-Provider implementations live under `providers/` with their upstream handling — HTML parsers, retry
-logic, rate limiting — intact and import paths rewritten. Keeping them self-contained means tested
+Provider implementations live under `providers/` with their upstream handling, HTML parsers, retry
+logic and rate limiting intact, and their import paths rewritten. Keeping them self-contained means tested
 behaviour stays stable and upstream fixes can be carried over independently. The orchestration layer
 is the only code that defines the tool contract; it never reaches into provider internals.
 
@@ -73,13 +102,36 @@ Provider code does not import anything from the orchestration layer. That one-wa
 keeps the boundary real rather than decorative. It is why the token-free sentiment fallback lives in
 `tools_tradingview.py` and not inside `marketaux_service.py`.
 
-### `tv_access.py` / `fv_access.py` are adapters, not wrappers
+### `tv_access.py` / `fv_access.py` / `yh_access.py` are adapters, not wrappers
 
-The two providers return different shapes for the same concept: Finviz uses
-`lastVolume`/`openInterest`/`bidPrice`, Yahoo uses `volume`/`openInterest`/`bid`. The adapters
-normalise shapes *and* convert provider exceptions into `ProviderError`. That single conversion point
-is why `reconcile.py` can promise never to raise: by the time an exception reaches it, it is already
-an envelope-ready dict.
+The providers return different shapes for the same concept: Finviz uses
+`lastVolume`/`openInterest`/`bidPrice`, Yahoo uses `volume`/`openInterest`/`bid`, TradingView's
+scanner uses `close`/`update_time`. The adapters normalise shapes *and* convert provider exceptions
+into `ProviderError`. That single conversion point is why `reconcile.py` can promise never to raise:
+by the time an exception reaches it, it is already an envelope-ready dict.
+
+They are also where a blocking call is pushed off the event loop. `stock_screener_service.screen_stocks`
+is synchronous (pandas + requests); it runs under `asyncio.to_thread`. Awaiting it directly raises
+`TypeError: object dict can't be used in 'await' expression`, which the reconciler would then record
+as a provider outage: a silent demotion to single-source.
+
+### `symbols.py` resolves per provider, and verifies
+
+A hardcoded ticker table cannot keep up, and when a row is missing it produces a *wrong-but-plausible*
+ticker that fails six layers later. The resolver instead:
+
+1. Takes an explicit `EXCHANGE:SYMBOL` at face value for that provider.
+2. Applies only mechanical conventions that have been confirmed against the live endpoint
+   (`XXXYYY` → `XXXYYY=X` when both halves are real currency codes, `BTCUSD` → `BTC-USD`).
+3. Falls back to each provider's own symbol search, ranking hits by exact-ticker match, asset class
+   and venue preference, with a confidence floor so "something vaguely similar" is never used.
+4. **Verifies against the quote endpoint.** TradingView's search offers `OANDA:BTCUSD`; its scanner
+   has no row for it. Resolution that stops at search hands the quote path a ticker it cannot quote
+   and a real instrument is reported as unavailable.
+5. Returns `none` with a reason for instruments a provider genuinely does not carry, never a
+   fabricated ticker. Yahoo has no spot-gold pair; `XAUUSD=X` returns HTTP 404.
+
+Results are cached per `(provider, query)` for an hour.
 
 ### `reconcile.py` owns the rules
 
@@ -87,22 +139,44 @@ One module decides what "agree" means, what happens on partial failure, what the
 which reading a field resolves to. If comparison semantics lived in each tool, `stock_quote` and
 `market_indices` would drift apart.
 
+It also owns the distinction between a *disagreement* and a *non-comparison*. `compare_values`
+accepts observation times and a `max_skew_seconds`; a session-relative field whose readings are an
+hour apart is reported as `not_comparable` with the gap in the reason, rather than as a conflict.
+`require_all_times` extends the same principle: if a provider reports no print time at all, the match
+cannot be *proven*, so it is not asserted.
+
 ### `freshness.py` decides *which* number
 
 Resolving to a single value needs a tie-break that is defensible, not arbitrary. `freshness.py`
-parses both providers' **print** timestamps — Yahoo's `regularMarketTime` epoch, Finviz's rendered
-`"Nov 03 • 3:59 PM ET"` — into UTC and hands the newer one to `reconcile.py`.
+parses each provider's **print** timestamp, TradingView's `update_time` epoch, Yahoo's
+`regularMarketTime` epoch, Finviz's rendered `"Nov 03 • 3:59 PM ET"`, into UTC and hands the newest
+one to `reconcile.py`.
 
 Print time, not fetch time: a quote fetched a second ago can still carry yesterday's close, so
 ordering by fetch time would select whichever provider answered last, which says nothing about which
 price is current. Parsing is deliberately forgiving and returns `None` rather than raising, because a
-provider changing its date rendering must degrade to "no freshness arbitration" — never to a crash
+provider changing its date rendering must degrade to "no freshness arbitration", never to a crash
 or a wrong ordering.
+
+### `ratelimit.py` is one gate per upstream
+
+All three upstreams are undocumented and rate-limited by their owners. Each gets a `ProviderLimiter`
+with a minimum interval, a concurrency cap, a shared exponential cooldown and a short TTL cache.
+Raising retry counts would deepen a block; pacing and a process-wide cooldown are what actually
+recover.
+
+The details matter in two places:
+
+- **Yahoo** starts answering `429` after a short burst and stays angry. It runs one request at a time
+  1 s apart, with a cooldown that backs off from 5 s to 120 s and decays on success.
+- **TradingView's websocket** signals a block as `invalid symbol` or `resolve error`, not `429`. Those
+  are treated as rate limiting (they are IP-scoped, not ticker-scoped), so a busy process does not
+  report a valid symbol as nonexistent.
 
 ### `merge_helpers.py` is pure
 
 Every shaper is a pure `dict → dict` function: no I/O, no clock, no randomness. That makes field
-mapping unit-testable without network, and auditable — you can read exactly which raw key becomes
+mapping unit-testable without network, and auditable: you can read exactly which raw key becomes
 which output field.
 
 ### `catalog.py` is plain data
@@ -113,22 +187,31 @@ capabilities before spending upstream requests.
 ## The fan-out contract
 
 ```python
-async def ask(tv_fn, fv_fn) -> Pair
+async def ask(tv_fn, fv_fn, yh_fn) -> Pair
 ```
 
-- Both coroutines run concurrently via `asyncio.gather`.
-- A `None` callable is not a failure — it becomes `NOT_ATTEMPTED` ("this provider has no such
+- All three coroutines run concurrently via `asyncio.gather`.
+- A `None` callable is not a failure: it becomes `NOT_ATTEMPTED` ("this provider has no such
   capability"), which is excluded from `errors`.
 - Any exception is caught and converted. `ask` **never** raises.
-- The slowest provider determines latency; a fast failure does not cancel the other leg.
+- The slowest provider determines latency; a fast failure does not cancel the other legs.
 
-## Three ways a response is built
+Tools pass `None` where a provider genuinely cannot contribute: `market_snapshot` passes `None` for
+Finviz (no breadth), `stock_screener` passes `None` for Yahoo (no screener endpoint), and the backtests
+pass `None` for Finviz (no OHLCV history).
+
+## Four ways a response is built
 
 | Entry point | When | Result |
 | --- | --- | --- |
-| `finalize(pair, specs=...)` | Both providers *could* answer | Field-by-field comparison, one value per field from the fresher print |
-| `finalize(pair, data=..., provider=...)` | Tool composes a richer payload than the field list | Same envelope, custom payload + explicit label |
-| `single(provider, value)` | Only one provider serves this capability at all | `TRADINGVIEW`/`FINVIZ`, other side `NOT_ATTEMPTED` |
+| `finalize(pair, specs=...)` | Several providers *could* answer | Field-by-field comparison, one value per field from the newest print |
+| `finalize(pair, data=... provider=...)` | Tool composes a richer payload than the field list | Same envelope, custom payload + explicit label |
+| `compare_values(...)` inside a tool | Comparison is per-row or per-symbol | A comparison block embedded in the payload |
+| `single(provider, value)` | Only one provider serves this capability at all | That provider's label, other legs `NOT_ATTEMPTED` |
+
+One tool needs two sequential `ask` calls because one provider's answer defines the universe the
+other is asked about: `stock_screener` (TradingView ranks, Finviz is then asked about exactly those
+tickers). Every other fan-out is a single round of parallel calls.
 
 ## Health monitor lifecycle
 
@@ -141,11 +224,11 @@ Tool calls only **read** the cached verdict, so a health probe never adds latenc
 ## Concurrency and blocking I/O
 
 The provider layer contains both sync and async code paths. Anything sync is pushed to a worker
-thread with `asyncio.to_thread`, so a blocking Yahoo `/v8/chart` call cannot stall the event loop for
-other in-flight tool calls.
+thread with `asyncio.to_thread`, so a blocking pandas/requests scraper or backtest computation cannot
+stall the event loop for other in-flight tool calls.
 
 ## Related
 
-- [Response Contract](Response-Contract) — the output shape
-- [Health Monitor](Health-Monitor) — probes and drift detection
-- [Design Decisions](Design-Decisions) — the reasoning behind non-obvious choices
+- [Response Contract](Response-Contract): the output shape
+- [Health Monitor](Health-Monitor): probes and drift detection
+- [Design Decisions](Design-Decisions): the reasoning behind non-obvious choices

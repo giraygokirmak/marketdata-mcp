@@ -8,7 +8,7 @@ Every setting is optional. Defaults are chosen so a bare `pip install` works.
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | Bind address for streamable-http (`--host` overrides) |
 | `PORT` | `8000` | Bind port (`--port` overrides) |
-| `DEBUG_MCP` | — | Any non-empty value enables debug logging |
+| `DEBUG_MCP` | - | Any non-empty value enables debug logging |
 
 ## Health monitor
 
@@ -22,13 +22,48 @@ Every setting is optional. Defaults are chosen so a bare `pip install` works.
 
 See [Health Monitor](Health-Monitor).
 
-## Finviz
+## Rate limiting (all three providers)
+
+Every upstream is undocumented and rate-limited by its owner, so **every** request (TradingView
+scanner, TradingView chart websocket, Finviz HTML/JSON, Yahoo chart API) passes through a
+per-provider limiter ([`ratelimit.py`](https://github.com/giraygokirmak/tapebasis/blob/main/src/tapebasis/ratelimit.py)).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TAPEBASIS_TV_MIN_INTERVAL` | `0.5` | Minimum seconds between TradingView request starts |
+| `TAPEBASIS_TV_MAX_INFLIGHT` | `2` | Max concurrent TradingView requests |
+| `TAPEBASIS_TV_MAX_RETRIES` | `2` | Retries per TradingView request |
+| `TAPEBASIS_FINVIZ_MIN_INTERVAL` | `0.35` | Minimum seconds between Finviz request starts |
+| `TAPEBASIS_FINVIZ_MAX_INFLIGHT` | `2` | Max concurrent Finviz requests |
+| `TAPEBASIS_FINVIZ_MAX_RETRIES` | `2` | Retries per Finviz request |
+| `TAPEBASIS_YAHOO_MIN_INTERVAL` | `1.0` | Minimum seconds between Yahoo request starts |
+| `TAPEBASIS_YAHOO_MAX_INFLIGHT` | `1` | Max concurrent Yahoo requests |
+| `TAPEBASIS_YAHOO_MAX_RETRIES` | `2` | Retries per Yahoo request |
+
+Three behaviours are not configurable, because they are safety properties rather than tuning knobs:
+
+- **A shared, exponential cooldown.** After a `429` (or a websocket `invalid symbol` / `resolve
+  error`), the provider is paused for the whole process: 5 s, doubling to a 120 s ceiling, with
+  jitter, decaying on success. One blocked request protects every later caller instead of each one
+  rediscovering the block.
+- **A short TTL cache**, so a quote asked twice in one agent turn does not reach the network twice.
+- **A per-process gate.** Limiter state is process-local; running several containers multiplies the
+  effective request rate.
+
+Yahoo is paced slowest (`1.0 s`, one at a time) because it starts answering `429` after a short burst
+and stays angry for a while. Raising concurrency or lowering the interval increases throughput at the
+cost of a block that outlasts the burst.
+
+Current limiter state (`min_interval_s`, `max_inflight`, `cooling_down_s`, `block_streak`,
+`cached_entries`) is reported by `tapebasis_health` and `GET /health` under `rate_limits`.
+
+## Finviz (provider layer)
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `FINVIZ_CACHE_TTL` | `30` | Scraped-page cache lifetime (s) |
 | `FINVIZ_TIMEOUT` | `25` | finviz.com HTTP timeout (s) |
-| `FINVIZ_MAX_RETRIES` | `2` | Retries per failed request |
+| `FINVIZ_MAX_RETRIES` | `2` | Retries per failed request inside the provider layer |
 | `FINVIZ_CHART_DIR` | `~/.tapebasis/charts` | Chart PNG output directory |
 | `FINVIZ_NEWS_TTL` | `60` | News cache lifetime (s) |
 | `FINVIZ_USER_AGENT` | browser UA | Override the User-Agent sent to finviz.com |
@@ -36,14 +71,18 @@ See [Health Monitor](Health-Monitor).
 Finviz's quote data is scraped from rendered HTML, so a short cache keeps prices fresh at the cost of
 more upstream requests. `FINVIZ_CACHE_TTL=30` is a deliberate middle ground.
 
-## TradingView scanner
+`FINVIZ_TIMEOUT=25` is a fail-fast ceiling: the fan-out waits for the slowest leg, so a hanging Finviz
+sets the latency of a response that the other two providers could have answered in a second.
 
-The scanner is an undocumented public endpoint, so these controls exist to stay politely below its
-rate limits.
+## TradingView provider layer
+
+The legacy `TRADINGVIEW_MCP_*` variables tune the technical-analysis/backtest services inside the
+provider package. The scanner, the chart websocket and every tool-level fan-out use the
+`TAPEBASIS_TV_*` limiters above; setting these does not change how often tools hit upstreams.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TRADINGVIEW_MCP_MIN_INTERVAL_S` | `0.5` | Minimum seconds between request starts |
+| `TRADINGVIEW_MCP_MIN_INTERVAL_S` | `0.5` | Minimum seconds between analysis-call starts |
 | `TRADINGVIEW_MCP_MAX_INFLIGHT` | `2` | Max concurrent analysis calls |
 | `TRADINGVIEW_MCP_RETRY_DELAYS` | `1.0,4.0` | Retry backoff schedule (seconds, comma-separated) |
 | `TRADINGVIEW_MCP_RETRY_JITTER` | `0.2` | ±20 % jitter so parallel callers do not retry in lockstep |
@@ -51,31 +90,23 @@ rate limits.
 | `TRADINGVIEW_MCP_CACHE_TTL` | `60` | Successful-result cache lifetime (s) |
 | `TRADINGVIEW_MCP_STALE_TTL` | `21600` | How long a cached result may still be served (6 h) |
 | `TRADINGVIEW_MCP_FAILURE_COOLDOWN_S` | `15` | Pause after a failure before retrying |
-
-Raising the interval and lowering `MAX_INFLIGHT` reduces the chance of `UPSTREAM_RATE_LIMIT`;
-lowering them increases throughput at that risk.
-
-## Finviz (additional)
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `FINVIZ_MAX_RETRIES` | (see provider) | Retries per failed Finviz request |
-| `FINVIZ_USER_AGENT` | browser UA | Override the User-Agent sent to finviz.com |
+| `TRADINGVIEW_MCP_BATCH_BUDGET_S` | provider default | Wall-clock budget for one batch of analysis calls |
+| `TRADINGVIEW_MCP_BATCH_MAX_CONSECUTIVE_FAILS` | provider default | Abort a batch after this many consecutive failures |
 
 ## News and sentiment
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MARKETAUX_API_TOKEN` | — | **Optional.** Licensed Marketaux news + entity sentiment |
+| `MARKETAUX_API_TOKEN` | - | **Optional.** Licensed Marketaux news + entity sentiment |
 | `MARKETAUX_DAILY_BUDGET` | `90` | Marketaux request cap per day |
 
-Neither is required. Without a token, sentiment is scored locally from Finviz headlines. See
-[Sentiment](Sentiment).
+Neither is required. Without a token, sentiment is scored locally from Finviz headlines and
+`stock_news` uses the Finviz and Yahoo feeds. See [Sentiment](Sentiment).
 
 ## No proxy configuration
 
-There is deliberately **no proxy support**. Both providers reach their upstreams directly. If you
-need egress control, do it at the network or container level.
+There is deliberately **no proxy support**. All three providers reach their upstreams directly. If
+you need egress control, do it at the network or container level.
 
 ## Example `.env`
 
@@ -89,9 +120,13 @@ TAPEBASIS_HEALTH_TTL=60
 FINVIZ_CACHE_TTL=30
 FINVIZ_TIMEOUT=25
 
-# TradingView scanner pacing
-TRADINGVIEW_MCP_MIN_INTERVAL_S=0.25
-TRADINGVIEW_MCP_MAX_INFLIGHT=4
+# Per-provider pacing
+TAPEBASIS_TV_MIN_INTERVAL=0.5
+TAPEBASIS_TV_MAX_INFLIGHT=2
+TAPEBASIS_FINVIZ_MIN_INTERVAL=0.35
+TAPEBASIS_FINVIZ_MAX_INFLIGHT=2
+TAPEBASIS_YAHOO_MIN_INTERVAL=1.0
+TAPEBASIS_YAHOO_MAX_INFLIGHT=1
 
 # Optional: licensed news + sentiment
 # MARKETAUX_API_TOKEN=
@@ -105,13 +140,19 @@ export them in the parent process.
 
 | Path | Contents | Safe to delete? |
 | --- | --- | --- |
-| `~/.tapebasis/health_state.json` | Probe baselines + last verdicts | Yes — re-baselines on next round |
+| `~/.tapebasis/health_state.json` | Probe baselines + last verdicts | Yes, re-baselines on next round |
 | `~/.tapebasis/charts/` | Generated chart PNGs | Yes |
 
 Both live under `~/.tapebasis` by default; in Docker that is the `tapebasis-state` volume.
 
+## Symbol resolution cache
+
+Symbol resolution is cached per `(provider, query)` for **1 hour**, in memory. It is not persisted and
+has no environment variable: a restart simply re-resolves. This is separate from the rate-limit TTL
+cache, which is measured in seconds.
+
 ## Related
 
-- [Health Monitor](Health-Monitor) — what the health variables control
-- [Docker](Docker) — volume layout and `.env` handling
-- [Troubleshooting](Troubleshooting) — symptoms traced to settings
+- [Health Monitor](Health-Monitor): what the health variables control
+- [Docker](Docker): volume layout and `.env` handling
+- [Troubleshooting](Troubleshooting): symptoms traced to settings

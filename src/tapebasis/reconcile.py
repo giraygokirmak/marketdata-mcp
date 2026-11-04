@@ -1,39 +1,53 @@
-"""Fan-out, comparison and fallback engine.
+"""Fan-out, comparison and fallback engine across N providers.
 
 The rule this module implements:
 
-* Ask both providers, in parallel, for every field both can serve.
+* Ask every provider that can serve the field, in parallel.
 * Compare the answers within a documented tolerance.
-* Both answered -> data is cross-verified (``BOTH``).
-* One answered -> serve it, mark the response ``TRADINGVIEW``/``FINVIZ`` and
-  say in the notice that it is *not* verified by the other provider.
-* A provider raised -> the other provider's answer still goes out; the failure
-  is attached under ``errors``.
-* Only when both fail is the response ``NONE``.
+* Two or more answered -> ``ALL`` (coverage), agreement reported separately.
+* Exactly one answered -> serve it, label it with that provider's name and say
+  in the notice that it is single-source.
+* A provider raised -> the other answers still go out; the failure is attached
+  under ``errors``.
+* Only when every provider fails is the response ``NONE``.
+
+``ALL`` is a *coverage* statement, every provider that was asked answered. It
+is not a claim that they agree; disagreement lives in ``comparisons[].match``
+and is named in the notice.
 
 Three entry points:
 
-``ask``       run two provider coroutines concurrently, never raise.
-``merge``     compare two payloads field-by-field into a ``Merged`` result.
-``finalize``  build the public envelope from a pair of attempts plus shapers.
+``ask``       run provider coroutines concurrently, never raise.
+``merge``     compare provider payloads field-by-field into a ``Merged`` result.
+``finalize``  build the public envelope from attempts plus shapers.
 """
 from __future__ import annotations
 
 import asyncio
 import math
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Iterable, Sequence
+from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 
 from .providers_state import (
     DataProvider,
     NoDataError,
+    NotApplicable,
     PROVIDER_MEANING,
+    PROVIDER_NAMES,
+    PROVIDER_ORDER,
     ProviderError,
     envelope,
+    provider_from_answered,
 )
 
 TRADINGVIEW = "TRADINGVIEW"
 FINVIZ = "FINVIZ"
+YAHOO = "YAHOO"
+
+#: Tie-break order when no provider reports a usable print time, or two report
+#: the identical instant. Fixed and documented rather than "whichever was asked
+#: first", so the same inputs always resolve to the same number.
+DEFAULT_ORDER: tuple[str, ...] = (FINVIZ, TRADINGVIEW, YAHOO)
 
 
 # ── Attempts ─────────────────────────────────────────────────────────────────
@@ -60,33 +74,70 @@ class Attempt:
 
 @dataclass
 class Pair:
-    """The two attempts that make up one reconciled response."""
+    """The attempts that make up one reconciled response.
 
-    tv: Attempt
-    fv: Attempt
+    Named ``Pair`` for historical reasons; it carries any number of providers.
+    ``tv``/``fv``/``yh`` are convenience accessors so a two-provider tool reads
+    naturally.
+    """
+
+    attempts: dict[str, Attempt] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Back-compat: Pair(tv=..., fv=...) is still accepted by callers that
+        # build it positionally in tests.
+        pass
+
+    @property
+    def tv(self) -> Attempt:
+        return self._get(TRADINGVIEW)
+
+    @property
+    def fv(self) -> Attempt:
+        return self._get(FINVIZ)
+
+    @property
+    def yh(self) -> Attempt:
+        return self._get(YAHOO)
+
+    def _get(self, provider: str) -> Attempt:
+        return self.attempts.get(
+            provider,
+            Attempt(
+                provider,
+                False,
+                error={
+                    "provider": provider,
+                    "code": "NOT_ATTEMPTED",
+                    "message": f"{provider} was not asked",
+                },
+            ),
+        )
+
+    def payload(self, provider: str) -> dict[str, Any] | None:
+        return self._get(provider).payload
+
+    @property
+    def answered(self) -> list[str]:
+        """Provider labels that actually produced a value, in display order."""
+        present = [p for p, a in self.attempts.items() if a.ok]
+        return sorted(present, key=lambda p: PROVIDER_ORDER.index(p) if p in PROVIDER_ORDER else 99)
 
     @property
     def provider(self) -> DataProvider:
-        flags = [self.tv.ok, self.fv.ok]
-        if all(flags):
-            return DataProvider.BOTH
-        if flags[0]:
-            return DataProvider.TRADINGVIEW
-        if flags[1]:
-            return DataProvider.FINVIZ
-        return DataProvider.NONE
+        return provider_from_answered(self.answered)
 
     @property
     def errors(self) -> list[dict[str, Any]]:
         """Real failures only.
 
         ``NOT_ATTEMPTED`` means the provider has no endpoint for this
-        capability at all (e.g. Finviz has no futures feed) — that is not an
+        capability at all (e.g. Finviz has no futures feed), that is not an
         error and must not be reported as one.
         """
         return [
             attempt.error
-            for attempt in (self.tv, self.fv)
+            for attempt in self.attempts.values()
             if attempt.failed
             and attempt.error
             and attempt.error.get("code") != "NOT_ATTEMPTED"
@@ -96,6 +147,9 @@ class Pair:
 def _error_dict(provider: str, exc: BaseException) -> dict[str, Any]:
     if isinstance(exc, ProviderError):
         return exc.to_dict()
+    if isinstance(exc, NotApplicable):
+        # Not a failure: this provider has no page/feed for this instrument.
+        return {"provider": provider, "code": "NOT_ATTEMPTED", "message": exc.message}
     if isinstance(exc, NoDataError):
         return {"provider": provider, "code": "NO_DATA", "message": exc.message}
     return {
@@ -133,46 +187,63 @@ async def _run(provider: str, fn: Callable[[], Awaitable[Any]]) -> Attempt:
 
 
 async def ask(
-    tv_fn: Callable[[], Awaitable[Any]] | None,
-    fv_fn: Callable[[], Awaitable[Any]] | None,
+    tv_fn: Callable[[], Awaitable[Any]] | None = None,
+    fv_fn: Callable[[], Awaitable[Any]] | None = None,
+    yahoo_fn: Callable[[], Awaitable[Any]] | None = None,
 ) -> Pair:
-    """Run both provider calls concurrently; a missing callable counts as failed."""
+    """Run every supplied provider call concurrently.
 
-    async def _skip(provider: str, reason: str) -> Attempt:
+    A ``None`` callable means "this provider has no endpoint for this request"
+    and is recorded as ``NOT_ATTEMPTED`` rather than as a failure, so it never
+    shows up in ``errors`` or drags the response down to ``NONE``.
+    """
+
+    def _skip(provider: str) -> Attempt:
         return Attempt(
             provider,
             False,
-            error={"provider": provider, "code": "NOT_ATTEMPTED", "message": reason},
+            error={
+                "provider": provider,
+                "code": "NOT_ATTEMPTED",
+                "message": f"{provider} has no endpoint for this request",
+            },
         )
 
-    tv_task = _run(TRADINGVIEW, tv_fn) if tv_fn else _skip(
-        TRADINGVIEW, "TradingView has no endpoint for this request"
-    )
-    fv_task = _run(FINVIZ, fv_fn) if fv_fn else _skip(
-        FINVIZ, "Finviz has no endpoint for this request"
-    )
-    tv, fv = await asyncio.gather(tv_task, fv_task)
-    return Pair(tv=tv, fv=fv)
+    plans: list[tuple[str, Callable[[], Awaitable[Any]] | None]] = [
+        (TRADINGVIEW, tv_fn),
+        (FINVIZ, fv_fn),
+        (YAHOO, yahoo_fn),
+    ]
+
+    async def _plan(label: str, fn: Callable[[], Awaitable[Any]] | None) -> Attempt:
+        # Wrapped in a coroutine so every gather argument is awaitable; a
+        # skipped provider must not be passed to gather as a bare Attempt.
+        if fn is None:
+            return _skip(label)
+        return await _run(label, fn)
+
+    outcomes = await asyncio.gather(*(_plan(label, fn) for label, fn in plans))
+    return Pair(attempts={attempt.provider: attempt for attempt in outcomes})
 
 
 def single(provider: str, value: Any = None, *, error: dict[str, Any] | None = None) -> Pair:
-    """Build a single-source pair (the other provider is marked NOT_ATTEMPTED)."""
-    other = FINVIZ if provider == TRADINGVIEW else TRADINGVIEW
+    """Build a single-source pair (the other providers are NOT_ATTEMPTED)."""
     ok = error is None
-    attempt = Attempt(provider, ok, value=value, error=error)
-    skipped = Attempt(
-        other,
-        False,
-        error={
-            "provider": other,
-            "code": "NOT_ATTEMPTED",
-            "message": f"{other} does not serve this capability",
-        },
-    )
-    pair = Pair(tv=attempt, fv=skipped) if provider == TRADINGVIEW else Pair(
-        tv=skipped, fv=attempt
-    )
-    return pair
+    attempts: dict[str, Attempt] = {}
+    for label in PROVIDER_ORDER:
+        if label == provider:
+            attempts[label] = Attempt(provider, ok, value=value, error=error)
+        else:
+            attempts[label] = Attempt(
+                label,
+                False,
+                error={
+                    "provider": label,
+                    "code": "NOT_ATTEMPTED",
+                    "message": f"{label} does not serve this capability",
+                },
+            )
+    return Pair(attempts=attempts)
 
 
 # ── Numeric comparison ───────────────────────────────────────────────────────
@@ -253,6 +324,112 @@ def compare_symbol(tv_value: Any, fv_value: Any) -> dict[str, Any]:
     return {"tv": tv_value, "fv": fv_value, "match": match}
 
 
+def compare_values(
+    values: Mapping[str, Any],
+    *,
+    kind: str = "numeric",
+    tolerance_pct: float = 0.5,
+    absolute_floor: float = 0.0,
+    times: Mapping[str, Any] | None = None,
+    max_skew_seconds: float | None = None,
+    require_all_times: bool = False,
+) -> dict[str, Any]:
+    """Compare the same field across N providers.
+
+    Produces ``values`` (provider -> raw reading), pairwise ``diff`` rows, and a
+    single ``match``: ``True`` when every pair of readings that can be compared
+    agrees, ``False`` when any pair disagrees, ``None`` when fewer than two
+    providers reported a usable value.
+
+    ``times`` + ``max_skew_seconds`` exist because some fields are only
+    comparable when the readings describe the *same* observation. A day
+    change percentage is quoted against the previous close of the session the
+    print belongs to, so Finviz's pre-market reading and Yahoo's regular-close
+    reading legitimately differ, flagging that as a provider conflict would be
+    a false alarm. Such a pair is recorded as not comparable (``match: None``
+    with a ``reason``) and left out of the agreement decision, while every
+    reading stays visible in ``values``.
+    """
+    from .freshness import parse_market_timestamp
+
+    present = {p: v for p, v in values.items() if v is not None}
+    row: dict[str, Any] = {
+        "values": present,
+        "match": None,
+        "diff": None,
+        "diff_pct": None,
+        "tolerance_pct": tolerance_pct,
+        "pairs": [],
+    }
+    labels = [p for p in PROVIDER_ORDER if p in present]
+    if len(labels) < 2:
+        return row
+
+    stamps: dict[str, Any] = {}
+    if times and (max_skew_seconds is not None or require_all_times):
+        stamps = {p: parse_market_timestamp(times.get(p)) for p in labels}
+
+    def _skew_reason(left: str, right: str) -> str | None:
+        if not stamps:
+            return None
+        a, b = stamps.get(left), stamps.get(right)
+        if a is None or b is None:
+            if require_all_times:
+                return (
+                    "at least one provider reported no print time, so the "
+                    "readings cannot be shown to describe the same observation"
+                )
+            return None
+        if max_skew_seconds is None:
+            return None
+        gap = abs((a - b).total_seconds())
+        if gap <= max_skew_seconds:
+            return None
+        return (
+            f"prints are {gap / 3600:.1f}h apart; this field is measured against "
+            f"a session-relative baseline, so the readings are not comparable"
+        )
+
+    matches: list[bool] = []
+    max_diff = 0.0
+    max_diff_pct = 0.0
+    for i, left in enumerate(labels):
+        for right in labels[i + 1:]:
+            if kind == "symbol":
+                pair = compare_symbol(present[left], present[right])
+            else:
+                pair = compare_numeric(
+                    present[left],
+                    present[right],
+                    tolerance_pct=tolerance_pct,
+                    absolute_floor=absolute_floor,
+                )
+            reason = _skew_reason(left, right)
+            if reason is not None:
+                pair = {
+                    **pair,
+                    "match": None,
+                    "not_comparable": reason,
+                }
+            if pair["match"] is None:
+                if reason is not None:
+                    row["pairs"].append({"between": [left, right], **pair})
+                continue
+            matches.append(pair["match"])
+            if pair.get("diff") is not None:
+                max_diff = max(max_diff, pair["diff"])
+                max_diff_pct = max(max_diff_pct, pair["diff_pct"])
+            row["pairs"].append({"between": [left, right], **pair})
+
+    if matches:
+        row["match"] = all(matches)
+        row["diff"] = round(max_diff, 6)
+        row["diff_pct"] = round(max_diff_pct, 4)
+    elif row["pairs"]:
+        row["not_comparable"] = True
+    return row
+
+
 # ── Field reconciliation ─────────────────────────────────────────────────────
 
 
@@ -266,54 +443,202 @@ class FieldSpec:
     kind: str = "numeric"
     tolerance_pct: float = 0.5
     absolute_floor: float = 0.0
+    yh_get: Callable[[dict[str, Any]], Any] | None = None
+    #: When set, readings whose observation times differ by more than this many
+    #: seconds are reported as *not comparable* instead of as a disagreement.
+    #: Only meaningful for session-relative fields (a day change, a volume), #: a price can be compared across minutes, a session baseline cannot.
+    max_skew_seconds: float | None = None
+
+    def extract(self, provider: str, payload: dict[str, Any]) -> Any:
+        getter = {
+            TRADINGVIEW: self.tv_get,
+            FINVIZ: self.fv_get,
+            YAHOO: self.yh_get,
+        }.get(provider)
+        return getter(payload) if getter else None
 
 
 @dataclass
 class Merged:
-    """Result of comparing two provider payloads field-by-field."""
+    """Result of comparing provider payloads field-by-field."""
 
     data: dict[str, Any] = field(default_factory=dict)
     fields: dict[str, DataProvider] = field(default_factory=dict)
     comparisons: list[dict[str, Any]] = field(default_factory=list)
     mismatches: list[str] = field(default_factory=list)
     provider: DataProvider = DataProvider.NONE
+    answered: list[str] = field(default_factory=list)
+    #: Fields whose readings describe different sessions, so comparing them
+    #: would invent a conflict. Reported, never counted as disagreement.
+    not_comparable: list[str] = field(default_factory=list)
     #: Which provider supplied the resolved values, and why. ``None`` when the
     #: resolution was not a freshness decision (single-source, or no timestamps).
     chosen: str | None = None
     freshness: dict[str, Any] = field(default_factory=dict)
 
 
-def _resolved_label(
-    *,
-    tv_time: Any,
-    fv_time: Any,
-) -> tuple[str, dict[str, Any]]:
-    """Decide which provider's values to resolve to when both answered.
+def _resolved_label(times: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Decide which provider's values to resolve to when several answered.
 
-    The rule: whichever provider printed more recently wins. When both report
-    the same instant, or neither reports a usable instant, the resolution falls
-    back to Finviz — a fixed, documented default rather than an arbitrary one.
+    The rule: whichever provider printed more recently wins. When several
+    report the *same newest* instant, the documented default order breaks the
+    tie, a fixed choice rather than an arbitrary one. Only the providers that
+    share the newest instant are eligible, so a stale provider can never win a
+    tie against fresher ones.
+
+    ``freshness["decision"]`` is the machine-readable outcome
+    (``newest`` / ``tie`` / ``no_timestamp``) so callers never have to parse
+    the human sentence.
     """
-    from .freshness import freshest, parse_market_timestamp
+    from .freshness import parse_market_timestamp
 
-    tv_moment = parse_market_timestamp(tv_time)
-    fv_moment = parse_market_timestamp(fv_time)
-    winner = freshest((TRADINGVIEW, tv_moment), (FINVIZ, fv_moment))
+    parsed = {p: parse_market_timestamp(t) for p, t in times.items()}
+    known = {p: m for p, m in parsed.items() if m is not None}
+    order_text = ", ".join(DEFAULT_ORDER)
+    stamps = {p.lower(): (parsed[p].isoformat() if parsed.get(p) else None) for p in times}
 
-    if winner and tv_moment != fv_moment:
-        reason = "newest market print timestamp"
-    elif tv_moment is not None and tv_moment == fv_moment:
-        reason = "timestamps identical; Finviz is the documented default"
-    else:
-        reason = "no usable market timestamp from either provider; Finviz is the documented default"
+    if not known:
+        fallback = next((p for p in DEFAULT_ORDER if p in times), DEFAULT_ORDER[0])
+        return fallback, {
+            **stamps,
+            "chosen": fallback,
+            "decision": "no_timestamp",
+            "reason": (
+                f"no provider reported a usable market timestamp; value taken from "
+                f"{fallback}, first available in the documented order ({order_text})"
+            ),
+        }
 
-    info: dict[str, Any] = {
-        "tradingview": tv_moment.isoformat() if tv_moment else None,
-        "finviz": fv_moment.isoformat() if fv_moment else None,
-        "chosen": winner or FINVIZ,
-        "reason": reason,
+    newest = max(known.values())
+    leaders = [p for p, m in known.items() if m == newest]
+
+    if len(leaders) == 1:
+        winner = leaders[0]
+        return winner, {
+            **stamps,
+            "chosen": winner,
+            "decision": "newest",
+            "newest_print": newest.isoformat(),
+            "reason": f"{winner} printed most recently ({newest.isoformat()})",
+        }
+
+    winner = next(
+        (p for p in DEFAULT_ORDER if p in leaders),
+        sorted(leaders)[0],
+    )
+    tied = ", ".join(sorted(leaders, key=lambda p: DEFAULT_ORDER.index(p)))
+    return winner, {
+        **stamps,
+        "chosen": winner,
+        "decision": "tie",
+        "newest_print": newest.isoformat(),
+        "tied": sorted(leaders, key=lambda p: DEFAULT_ORDER.index(p)),
+        "reason": (
+            f"{tied} printed at the same instant ({newest.isoformat()}); "
+            f"{winner} wins the documented order ({order_text})"
+        ),
     }
-    return (winner or FINVIZ), info
+
+
+def _pick(value_for: Callable[[str], Any], order: Sequence[str]) -> tuple[Any, str | None]:
+    """First provider in ``order`` that has a value for this field."""
+    for provider in order:
+        value = value_for(provider)
+        if value is not None:
+            return value, provider
+    return None, None
+
+
+def merge_many(
+    payloads: Mapping[str, dict[str, Any] | None],
+    specs: Sequence[FieldSpec],
+    *,
+    shapes: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
+    times: Mapping[str, Any] | None = None,
+) -> Merged:
+    """Compare N provider payloads; resolve each field to a single value.
+
+    When two or more providers answered, every compared field resolves to **one**
+    value: the reading from whichever provider printed more recently. All raw
+    readings stay in ``comparisons``, so the choice is auditable but the caller
+    never has to reconcile several numbers to answer "what is the price".
+
+    Agreement is a separate axis. A field the providers disagree on is listed in
+    ``mismatches`` and named in the notice; it is still resolved to one value,
+    because a response with three prices for one instrument is a worse answer
+    than one price plus a stated conflict.
+    """
+    present = {p: v for p, v in payloads.items() if v is not None}
+    answered = [
+        p for p in PROVIDER_ORDER if p in present
+    ]
+    if not present:
+        return Merged(provider=DataProvider.NONE)
+
+    if len(present) == 1:
+        provider = answered[0]
+        shape = (shapes or {}).get(provider)
+        payload = present[provider]
+        shaped = shape(payload) if shape else dict(payload)
+        return Merged(
+            data=shaped,
+            fields={key: DataProvider(provider) for key in shaped},
+            provider=DataProvider(provider),
+            answered=[provider],
+        )
+
+    out = Merged(provider=DataProvider.ALL, answered=answered)
+    chosen, freshness = _resolved_label(times or {})
+    if chosen not in present:
+        # A provider can resolve as the freshest name but still not have a
+        # payload; fall back to the first answered provider in default order.
+        chosen = next(
+            (p for p in DEFAULT_ORDER if p in present),
+            answered[0],
+        )
+        freshness["chosen"] = chosen
+    out.chosen = chosen
+    out.freshness = freshness
+    order = [chosen] + [
+        p for p in DEFAULT_ORDER if p != chosen and p in present
+    ]
+
+    for spec in specs:
+        values = {p: spec.extract(p, present[p]) for p in answered}
+        row = compare_values(
+            values,
+            kind=spec.kind,
+            tolerance_pct=spec.tolerance_pct,
+            absolute_floor=spec.absolute_floor,
+            times=times,
+            max_skew_seconds=spec.max_skew_seconds,
+        )
+        row["field"] = spec.name
+        out.comparisons.append(row)
+
+        value, source = _pick(lambda p: values.get(p), order)
+        if value is not None:
+            out.data[spec.name] = value
+            supplied = sum(1 for v in values.values() if v is not None)
+            out.fields[spec.name] = (
+                DataProvider.ALL if supplied >= 2 else DataProvider(str(source))
+            )
+            row["chosen"] = source
+        if row["match"] is False:
+            out.mismatches.append(spec.name)
+        elif row.get("not_comparable"):
+            out.not_comparable.append(spec.name)
+
+    # Everything a provider shaped but the spec list did not cover, freshest
+    # provider first so its own extras are not overwritten by a stale provider.
+    for provider in reversed(order):
+        shape = (shapes or {}).get(provider)
+        if not shape:
+            continue
+        for key, value in shape(present[provider]).items():
+            out.data.setdefault(key, value)
+            out.fields.setdefault(key, DataProvider(provider))
+    return out
 
 
 def merge(
@@ -325,125 +650,87 @@ def merge(
     fv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     tv_time: Any = None,
     fv_time: Any = None,
+    yahoo_payload: dict[str, Any] | None = None,
+    yh_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    yahoo_time: Any = None,
 ) -> Merged:
-    """Compare both payloads; resolve each field to a single value.
-
-    When both providers answered, every compared field resolves to **one**
-    value: the reading from whichever provider printed more recently
-    (``tv_time``/``fv_time``). Both raw readings stay in ``comparisons``, so the
-    choice is auditable but the caller never has to reconcile two numbers to
-    answer "what is the price".
-
-    Agreement is a separate axis. A field the providers disagree on is listed in
-    ``mismatches`` and named in the notice; it is still resolved to one value,
-    because a response with two prices for one instrument is a worse answer than
-    one price plus a stated conflict.
-    """
-    if tv_payload is not None and fv_payload is not None:
-        out = Merged(provider=DataProvider.BOTH)
-        chosen, freshness = _resolved_label(tv_time=tv_time, fv_time=fv_time)
-        out.chosen = chosen
-        out.freshness = freshness
-        for spec in specs:
-            tv_value = spec.tv_get(tv_payload) if spec.tv_get else None
-            fv_value = spec.fv_get(fv_payload) if spec.fv_get else None
-            row = (
-                compare_symbol(tv_value, fv_value)
-                if spec.kind == "symbol"
-                else compare_numeric(
-                    tv_value,
-                    fv_value,
-                    tolerance_pct=spec.tolerance_pct,
-                    absolute_floor=spec.absolute_floor,
-                )
-            )
-            row["field"] = spec.name
-            out.comparisons.append(row)
-
-            # Resolve to one value: the fresher provider's, falling back to the
-            # other side when the winner did not report this field at all.
-            if chosen == TRADINGVIEW:
-                primary, secondary = tv_value, fv_value
-            else:
-                primary, secondary = fv_value, tv_value
-            value = primary if primary is not None else secondary
-            if value is not None:
-                out.data[spec.name] = value
-                both_supplied = tv_value is not None and fv_value is not None
-                out.fields[spec.name] = (
-                    DataProvider.BOTH if both_supplied else DataProvider(chosen)
-                )
-                row["chosen"] = chosen if primary is not None else (
-                    FINVIZ if chosen == TRADINGVIEW else TRADINGVIEW
-                )
-            if row["match"] is False:
-                out.mismatches.append(spec.name)
-
-        if fv_shape:
-            for key, value in fv_shape(fv_payload).items():
-                out.data.setdefault(key, value)
-                out.fields.setdefault(key, DataProvider.FINVIZ)
-        if tv_shape:
-            for key, value in tv_shape(tv_payload).items():
-                out.data.setdefault(key, value)
-                out.fields.setdefault(key, DataProvider.TRADINGVIEW)
-        return out
-
-    if fv_payload is not None:
-        shaped = fv_shape(fv_payload) if fv_shape else dict(fv_payload)
-        return Merged(
-            data=shaped,
-            fields={key: DataProvider.FINVIZ for key in shaped},
-            provider=DataProvider.FINVIZ,
-        )
-
-    if tv_payload is not None:
-        shaped = tv_shape(tv_payload) if tv_shape else dict(tv_payload)
-        return Merged(
-            data=shaped,
-            fields={key: DataProvider.TRADINGVIEW for key in shaped},
-            provider=DataProvider.TRADINGVIEW,
-        )
-
-    return Merged(provider=DataProvider.NONE)
+    """Two- or three-provider :func:`merge_many`."""
+    return merge_many(
+        {TRADINGVIEW: tv_payload, FINVIZ: fv_payload, YAHOO: yahoo_payload},
+        specs,
+        shapes={
+            TRADINGVIEW: tv_shape or (lambda p: dict(p)),
+            FINVIZ: fv_shape or (lambda p: dict(p)),
+            YAHOO: yh_shape or (lambda p: dict(p)),
+        },
+        times={
+            TRADINGVIEW: tv_time,
+            FINVIZ: fv_time,
+            YAHOO: yahoo_time,
+        },
+    )
 
 
 # ── Envelope assembly ────────────────────────────────────────────────────────
 
 
+def _provider_phrase(answered: Iterable[str]) -> str:
+    labels = [PROVIDER_NAMES.get(p, p) for p in answered]
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return ", ".join(labels[:-1]) + " and " + labels[-1]
+
+
 def notice_for(merged: Merged) -> str:
     """Provider notice, extended with agreement and freshness explanation."""
     base = PROVIDER_MEANING[merged.provider]
-    if merged.provider is not DataProvider.BOTH:
+    if merged.provider is DataProvider.ALL:
+        base = (
+            f"Every provider asked answered ({_provider_phrase(merged.answered)}). "
+            "Coverage is ALL; agreement is a separate axis."
+        )
+    if merged.provider is not DataProvider.ALL:
         return base
 
-    chosen = merged.chosen or FINVIZ
+    chosen = merged.chosen or DEFAULT_ORDER[0]
     freshness = merged.freshness or {}
-    reason = freshness.get("reason", "")
+    decision = freshness.get("decision")
 
     if merged.mismatches:
-        if reason == "newest market print timestamp":
-            why = f" the value shown is {chosen}'s because it printed more recently."
-        elif reason.startswith("timestamps identical"):
+        if decision == "newest":
+            why = f" The value shown is {chosen}'s because it printed more recently."
+        elif decision == "tie":
             why = (
-                f" both providers printed at the same instant, so the value shown "
-                f"is {chosen}'s (the documented default)."
+                f" the showing providers printed at the same instant, so the value "
+                f"shown is {chosen}'s (documented order)."
             )
         else:
             why = ""
         base += (
-            " NOTE: the two providers disagree on "
+            " NOTE: the providers disagree on "
             + ", ".join(merged.mismatches)
-            + "; both readings appear in `comparisons` and the response holds a "
+            + "; every reading appears in `comparisons` and the response holds a "
             f"single value.{why} The conflict is reported, not silently resolved."
         )
     else:
         base += " Compared fields agree within tolerance."
-        if reason == "newest market print timestamp":
+        if decision == "newest":
             base += (
                 f" The value shown is {chosen}'s because it printed more recently "
-                "than the other provider's."
+                "than the other providers'."
             )
+        elif decision == "tie":
+            base += (
+                f" The showing providers printed at the same instant, so the value "
+                f"shown is {chosen}'s (documented order)."
+            )
+    if merged.not_comparable:
+        base += (
+            " Not cross-checked because the providers' prints belong to different "
+            "sessions: " + ", ".join(merged.not_comparable) + "."
+        )
     return base
 
 
@@ -457,10 +744,13 @@ def finalize(
     specs: Sequence[FieldSpec] = (),
     tv_norm: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     fv_norm: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    yh_norm: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     tv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     fv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    yh_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     tv_time: Any = None,
     fv_time: Any = None,
+    yahoo_time: Any = None,
     sources: dict[str, str] | None = None,
     warnings: Iterable[str] = (),
     degraded: bool = False,
@@ -468,62 +758,75 @@ def finalize(
     health_warn: Iterable[str] | None = None,
     data: Any = None,
     provider: DataProvider | None = None,
+    answered: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    """Reconcile a pair of attempts and wrap the result in the public envelope.
+    """Reconcile attempts and wrap the result in the public envelope.
 
-    ``tv_norm``/``fv_norm`` map a raw provider payload into the normalised field
-    dict that ``specs`` read from; when given, every remaining normalised field
-    is attached to the output labelled with its source provider.
+    ``tv_norm``/``fv_norm``/``yh_norm`` map a raw provider payload into the
+    normalised field dict that ``specs`` read from; when given, every remaining
+    normalised field is attached to the output labelled with its source
+    provider.
 
-    ``tv_time``/``fv_time`` are the **market print** timestamps (not fetch
-    times). When both providers answered, every compared field resolves to the
-    fresher provider's reading; both originals stay in ``comparisons``.
+    ``tv_time``/``fv_time``/``yahoo_time`` are the **market print** timestamps
+    (not fetch times). When providers answered, every compared field resolves to
+    the freshest provider's reading; all originals stay in ``comparisons``.
 
-    ``data``/``provider`` override the reconciled payload and label; tools that
-    compose a richer payload than the field list use them, and the notice is
-    rebuilt so it still states the true provider and any mismatches.
+    ``data``/``provider``/``answered`` override the reconciled payload and
+    label; tools that compose a richer payload than the field list use them, and
+    the notice is rebuilt so it still states the true providers and any
+    mismatches.
     """
-    tv_payload = pair.tv.payload
-    fv_payload = pair.fv.payload
-    if tv_payload is not None and tv_norm is not None:
-        tv_payload = tv_norm(tv_payload)
-        if tv_shape is None:
-            tv_shape = _identity
-    if fv_payload is not None and fv_norm is not None:
-        fv_payload = fv_norm(fv_payload)
-        if fv_shape is None:
-            fv_shape = _identity
+    payloads: dict[str, dict[str, Any] | None] = {}
+    shapes: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+    for label, attempt, norm, shape in (
+        (TRADINGVIEW, pair.tv, tv_norm, tv_shape),
+        (FINVIZ, pair.fv, fv_norm, fv_shape),
+        (YAHOO, pair.yh, yh_norm, yh_shape),
+    ):
+        payload = attempt.payload
+        if payload is not None and norm is not None:
+            payload = norm(payload)
+            shape = shape or _identity
+        payloads[label] = payload
+        if shape is not None:
+            shapes[label] = shape
 
-    if tv_time is None and tv_payload is not None:
-        tv_time = tv_payload.get("price_timestamp")
-    if fv_time is None and fv_payload is not None:
-        fv_time = fv_payload.get("price_timestamp")
+    times: dict[str, Any] = {}
+    for label, explicit, payload in (
+        (TRADINGVIEW, tv_time, payloads.get(TRADINGVIEW)),
+        (FINVIZ, fv_time, payloads.get(FINVIZ)),
+        (YAHOO, yahoo_time, payloads.get(YAHOO)),
+    ):
+        stamp = explicit
+        if stamp is None and payload is not None:
+            stamp = payload.get("price_timestamp")
+        if stamp is not None:
+            times[label] = stamp
 
-    merged = merge(
-        tv_payload,
-        fv_payload,
-        specs,
-        tv_shape=tv_shape,
-        fv_shape=fv_shape,
-        tv_time=tv_time,
-        fv_time=fv_time,
-    )
+    merged = merge_many(payloads, specs, shapes=shapes, times=times)
     if provider is not None:
         merged.provider = provider
     if data is not None:
         merged.data = data
+    if answered is not None:
+        merged.answered = list(answered)
 
     warn_list = list(warnings)
     if health_warn:
         warn_list.extend(health_warn)
     if degraded:
         warn_list.append(
-            "Provider health monitor reports an upstream change/outage — run "
+            "Provider health monitor reports an upstream change/outage; run "
             "tapebasis_health for details."
         )
     if merged.provider is not DataProvider.NONE and merged.mismatches:
         warn_list.append(
             "Providers disagree on: " + ", ".join(merged.mismatches)
+        )
+    if merged.provider is not DataProvider.NONE and merged.not_comparable:
+        warn_list.append(
+            "Not cross-checked (providers' prints belong to different sessions): "
+            + ", ".join(merged.not_comparable)
         )
 
     merged_extra = dict(extra or {})
@@ -531,8 +834,8 @@ def finalize(
     # that compare non-price fields (index levels, counts) have no print time
     # on either side, and reporting "no usable timestamp" there is noise about
     # a decision that was never in question.
-    if merged.freshness and (
-        merged.freshness.get("tradingview") or merged.freshness.get("finviz")
+    if merged.freshness and any(
+        merged.freshness.get(p.lower()) for p in PROVIDER_ORDER
     ):
         merged_extra.setdefault("freshness", merged.freshness)
 
@@ -545,19 +848,18 @@ def finalize(
         errors=pair.errors,
         warnings=warn_list,
         degraded=degraded,
+        providers_answered=merged.answered,
         extra=merged_extra,
     )
     body["notice"] = notice_for(merged)
     if degraded:
         body["notice"] += (
             " WARNING: the provider health monitor reports an upstream change or "
-            "outage — see tapebasis_health."
+            "outage, see tapebasis_health."
         )
     return body
 
 
 def providers_in(pair: Pair) -> tuple[str, ...]:
     """Provider labels that actually answered (used for health-warning scoping)."""
-    return tuple(
-        label for label, attempt in ((TRADINGVIEW, pair.tv), (FINVIZ, pair.fv)) if attempt.ok
-    )
+    return tuple(pair.answered)

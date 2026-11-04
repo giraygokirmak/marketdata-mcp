@@ -24,7 +24,8 @@ curl -s localhost:6013/health
 
 One manifest covers `linux/amd64` and `linux/arm64`. The package is public, so no login is needed to
 pull it. If you fork the repository, the workflow publishes to your own namespace automatically
-(`images: ghcr.io/${{ github.repository }}`) using the built-in `GITHUB_TOKEN` — no extra secret.
+(`images: ghcr.io/${{ github.repository }}`) using the built-in `GITHUB_TOKEN`, no extra secret
+required.
 
 ## Compose (recommended)
 
@@ -85,7 +86,7 @@ python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/
 ```
 
 It hits `/health`, which reads the **cached** monitor verdict and makes no upstream call. That keeps
-the check cheap and independent of third-party availability — a Finviz outage should not mark the
+the check cheap and independent of third-party availability: a Finviz outage should not mark the
 container unhealthy.
 
 | Setting | Value |
@@ -112,13 +113,20 @@ environment:
   - FINVIZ_CHART_DIR=/home/mcpuser/.tapebasis/charts
 ```
 
-`HOST=0.0.0.0` is required inside the container — binding to loopback would make the port mapping
+`HOST=0.0.0.0` is required inside the container: binding to loopback would make the port mapping
 useless.
 
 `.env` is loaded with `required: false`, so a missing file is not an error.
 
 Add `MARKETAUX_API_TOKEN` to `.env` only if you want the licensed news/sentiment path. Nothing
 requires it.
+
+### Scaling and rate limits
+
+Limiter state is **per process**. Running several containers (or several replicas) multiplies the
+effective request rate against every upstream, and each replica discovers a block on its own before
+sharing nothing. If you scale out, raise `TAPEBASIS_<PROVIDER>_MIN_INTERVAL` accordingly, or run a
+single replica.
 
 ## Verifying a deployment
 
@@ -129,21 +137,22 @@ curl -s localhost:6013/health | python -m json.tool
 # 2. Container healthy
 docker compose ps
 
-# 3. Drift verdicts
-curl -s localhost:6013/health | python -c "import json,sys; d=json.load(sys.stdin); print(d.get('status'), d.get('degraded'))"
+# 3. Drift verdicts and rate-limit state
+curl -s localhost:6013/health | python -c "import json,sys; d=json.load(sys.stdin); print(d.get('status'), d.get('degraded'), d.get('rate_limits'))"
 ```
 
 A `degraded: true` from a fresh container usually means an upstream is genuinely down or has changed
-shape — check `docker compose logs` and then [Troubleshooting](Troubleshooting).
+shape. Check `docker compose logs` and then [Troubleshooting](Troubleshooting).
 
 ## Notes
 
-- **No proxy support** is built in. Use network-level egress control if you need it.
+- **No proxy support** is built in. All three providers reach their upstreams directly. Use
+  network-level egress control if you need it.
 - The image has no authentication. Do not expose port 6013 to the public internet without a reverse
   proxy that adds auth.
 - Image size is dominated by pandas and the provider layer; it is not a slim image.
 
 ## Related
 
-- [Configuration](Configuration) — every variable
-- [Health Monitor](Health-Monitor) — what `/health` reports
+- [Configuration](Configuration): every variable
+- [Health Monitor](Health-Monitor): what `/health` reports

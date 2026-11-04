@@ -1,5 +1,5 @@
 """
-Multi-Agent Service — sentiment scoring, risk assessment, and the
+Multi-Agent Service, sentiment scoring, risk assessment, and the
 multi-agent debate pipeline for technical analysis.
 
 All functions are pure business logic with no MCP coupling.
@@ -33,8 +33,7 @@ def calculate_sentiment_score(indicators: dict, price_change: float) -> dict:
     Returns:
         Dict with 'score' (raw), 'normalized' (-3..+3), and 'signals' list.
     """
-    # TradingView returns explicit nulls, so dict.get defaults don't fire —
-    # `indicators.get("RSI", 50.0)` yields None when the key exists as None,
+    # TradingView returns explicit nulls, so dict.get defaults don't fire, # `indicators.get("RSI", 50.0)` yields None when the key exists as None,
     # and `None > 60` crashes the whole tool.
     rsi = indicators.get("RSI")
     rsi = 50.0 if rsi is None else rsi
@@ -157,7 +156,7 @@ def run_multi_agent_analysis(
     bb_rating = metrics.get("rating") or 0
     bbw = metrics.get("bbw") or 0.0  # compute_metrics returns bbw=None sometimes
 
-    # Rule set 1 — Bollinger/price checklist
+    # Rule set 1, Bollinger/price checklist
     tech_analyst = {
         "role": "Trend & Bands (rule set)",
         "stance": "Bullish" if bb_rating > 0 else "Bearish" if bb_rating < 0 else "Neutral",
@@ -169,7 +168,7 @@ def run_multi_agent_analysis(
         ],
     }
 
-    # Rule set 2 — momentum checklist (RSI/MACD only; no news or sentiment
+    # Rule set 2, momentum checklist (RSI/MACD only; no news or sentiment
     # source feeds this, so it must not be labeled "sentiment").
     sentiment_data = calculate_sentiment_score(indicators, change)
     sentiment_analyst = {
@@ -183,7 +182,7 @@ def run_multi_agent_analysis(
         "key_observations": sentiment_data["signals"],
     }
 
-    # Rule set 3 — volatility/structure checklist
+    # Rule set 3, volatility/structure checklist
     risk_data = calculate_risk_score(indicators, bbw)
     risk_manager = {
         "role": "Volatility & Structure (rule set)",
@@ -199,7 +198,7 @@ def run_multi_agent_analysis(
         + risk_manager["risk_score"]
     )
 
-    # "confidence" here is rule agreement, not a probability — the wording
+    # "confidence" here is rule agreement, not a probability, the wording
     # must never suggest conviction the underlying single snapshot can't carry.
     if total_score >= 3 and risk_manager["risk_level"] != "High":
         final_decision, confidence = "BUY (strong rule alignment)", "rules strongly aligned"

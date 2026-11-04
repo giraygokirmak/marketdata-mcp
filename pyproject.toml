@@ -1,7 +1,7 @@
 [project]
 name = "tapebasis"
 version = "1.0.0"
-description = "MCP server that serves TradingView and Finviz market data together, cross-checks overlapping fields, labels every response BOTH/TRADINGVIEW/FINVIZ/NONE and monitors upstream schema drift"
+description = "MCP server that serves TradingView, Finviz and Yahoo Finance market data together, cross-checks every overlapping field, labels each response ALL/TRADINGVIEW/FINVIZ/YAHOO/NONE and monitors upstream schema drift"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "MIT"

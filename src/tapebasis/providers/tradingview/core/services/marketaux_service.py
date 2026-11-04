@@ -13,16 +13,16 @@ Without it, callers degrade instead of failing:
 * ``fetch_news_summary`` returns an empty, clearly-labelled payload. Finviz
   remains the news source, so ``stock_news`` still works.
 * ``analyze_sentiment`` is scored locally by :mod:`tapebasis.sentiment`
-  over Finviz headlines — deterministic, offline, no key.
+  over Finviz headlines: deterministic, offline, no key.
 
 Design constraints (free plan: 100 requests/day, 3 articles/request):
-  - ONE underlying fetch per symbol serves BOTH news and sentiment —
-    articles are the news; their entity sentiment scores are the sentiment.
-    combined_analysis therefore costs 1 request, not 2.
+  - ONE underlying fetch per symbol serves both news and sentiment: articles are the news,
+    their entity sentiment scores are the sentiment. combined_analysis
+    therefore costs 1 request, not 2.
   - 4h TTL cache, stale entries retained: on a daily-timeframe product,
     4h-old headlines are fine, and stale beats empty when the budget runs out.
   - Hard daily budget (default 90, env-tunable): once spent, serve stale or a
-    shape-compatible "unavailable" payload — never raise into the tool layer.
+    shape-compatible "unavailable" payload, never raise into the tool layer.
 
 Env:
   MARKETAUX_API_TOKEN   optional, without it the local scorer takes over
@@ -123,7 +123,7 @@ def _get_articles(symbol: Optional[str], category: str) -> tuple[list[dict], str
         _budget["used"] += 1  # reserve before the network call
 
     if base:
-        # Crypto tickers aren't reliably in Marketaux's symbols index — a text
+        # Crypto tickers aren't reliably in Marketaux's symbols index, a text
         # search on the base finds coin coverage; equities go through symbols=.
         params = {"search": base} if is_crypto else {"symbols": base}
     elif category == "crypto":
@@ -134,7 +134,7 @@ def _get_articles(symbol: Optional[str], category: str) -> tuple[list[dict], str
     articles = _request(params)
 
     # Equity-style lookup that came back empty may still be a crypto ticker
-    # we don't know (e.g. a new coin) — one text-search fallback, budget permitting.
+    # we don't know (e.g. a new coin), one text-search fallback, budget permitting.
     if base and not is_crypto and articles == []:
         with _lock:
             can_retry = _budget_left() > 0
@@ -163,7 +163,7 @@ def _clean_text(text: str) -> str:
 
 
 # Keyword fallback for articles Marketaux returns WITHOUT entity scores (its
-# text-search path — most crypto coverage — attaches no entities). Same scorer
+# text-search path, most crypto coverage, attaches no entities). Same scorer
 # the old Reddit service used, applied to licensed headline/description text.
 _BULLISH_KEYWORDS = [
     "buy", "bull", "moon", "pump", "long", "call", "up", "gain",
@@ -181,7 +181,7 @@ def _keyword_score(text: str) -> float:
     import re
 
     # Whole-word matching only: bare substring checks scored "up" inside
-    # "supply", "call" inside "recall", "top" inside "stop" — systematically
+    # "supply", "call" inside "recall", "top" inside "stop", systematically
     # corrupting the bullish/bearish label.
     words = set(re.findall(r"[a-z]+", (text or "").lower()))
     bull = sum(1 for w in _BULLISH_KEYWORDS if w in words)
@@ -252,7 +252,7 @@ def analyze_sentiment(
 
     Without ``MARKETAUX_API_TOKEN`` this provider has nothing to score and says
     so. The tool layer (``tools_tradingview._sentiment_payload``) then swaps in
-    :mod:`tapebasis.sentiment`, which scores Finviz headlines locally — so
+    :mod:`tapebasis.sentiment`, which scores Finviz headlines locally, so
     the *tool* works token-free even though this provider needs a key.
     """
     base, _ = _clean_symbol(symbol)
@@ -270,7 +270,7 @@ def analyze_sentiment(
 
     # An empty article list with no cache to fall back on means the token was
     # rejected, the quota is gone or the upstream is down. Returning 0.0 here
-    # would read as "the news is neutral", which is a fabricated result — the
+    # would read as "the news is neutral", which is a fabricated result, the
     # caller must be told there was nothing to score and left to fall back.
     if not articles:
         return {
@@ -310,8 +310,7 @@ def analyze_sentiment(
         if ent_scores:
             art_score = sum(ent_scores) / len(ent_scores)
         else:
-            # No entity scores at all (Marketaux's text-search path) —
-            # keyword-score the licensed headline/description text instead.
+            # No entity scores at all (Marketaux's text-search path), # keyword-score the licensed headline/description text instead.
             art_score = _keyword_score(f"{a.get('title', '')} {a.get('description', '')}")
         scores.append(art_score)
         top.append({

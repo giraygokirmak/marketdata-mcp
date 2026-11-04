@@ -2,18 +2,22 @@
 
 <img src="https://raw.githubusercontent.com/giraygokirmak/tapebasis/main/docs/logo.svg" alt="Tapebasis" width="300">
 
-**Two tapes, one basis.** An MCP server that serves **TradingView** and **Finviz** market data
-together, cross-checks every overlapping figure, and labels each response with the provider that
-actually produced it.
+**Three tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
+market data together, cross-checks every overlapping figure, and labels each response with the
+provider that actually produced it.
 
 *Basis* is the finance term for the price difference between two markets quoting the same asset.
-*Tape* is the ticker tape. Tapebasis is the spread between two feeds, measured on every call.
+*Tape* is the ticker tape. Tapebasis is the spread between three feeds, measured on every call.
 
-The point is redundancy you can *see*. When both providers answer, the data is cross-verified. When
-only one answers, you get the data — clearly marked as single-source. When neither answers, you get
-`NONE` instead of a plausible-looking number. And because both providers scrape or call undocumented
-upstreams, a background monitor probes every endpoint and reports API/schema drift inside ordinary
-tool responses.
+The point is redundancy you can *see*. Every provider that could answer a field is asked, natively
+and in parallel. When several answer, the data is cross-checked. When only one answers, you get the
+data, clearly marked as single-source. When none answers, you get `NONE` instead of a
+plausible-looking number. And because all three providers scrape or call undocumented upstreams, a
+background monitor probes every endpoint and reports API/schema drift inside ordinary tool responses.
+
+Each leg is genuinely independent: TradingView's own scanner and chart websocket, Finviz's HTML and
+JSON islands, Yahoo's chart API. A provider that quietly proxies another is worthless as a
+cross-check, so none does.
 
 **No tool requires an API key.** Every capability works out of the box; `MARKETAUX_API_TOKEN` only
 upgrades news and sentiment to a licensed feed.
@@ -22,16 +26,16 @@ upgrades news and sentiment to a licensed feed.
 
 ## Why this exists
 
-One market-data source gives an agent a single number and no way to judge it. Asking two independent
-providers the same question and comparing the answers inverts the problem: the server asks both,
-compares, and tells the agent what it is holding.
+One market-data source gives an agent a single number and no way to judge it. Asking several
+independent providers the same question and comparing the answers inverts the problem: the server
+asks them all, compares, and tells the agent what it is holding.
 
 | Situation | What this server reports | What a single-source feed cannot |
 | --- | --- | --- |
-| Both providers answer, values agree | `BOTH` — cross-verified | confirm the number against an independent reading |
-| Both answer, values differ | `BOTH` + both values in `comparisons` + a warning | show that a disagreement exists |
-| One provider is down | `TRADINGVIEW`/`FINVIZ` + "not cross-verified" | say the figure is single-source |
-| Both down | `NONE` — no value presented | avoid a stale or invented number |
+| Every asked provider answers, values agree | `ALL`, `comparisons[].match: true` | confirm the number against independent readings |
+| They answer but diverge | `ALL` + every value in `comparisons` + a warning | show that a disagreement exists |
+| One provider is down | `TRADINGVIEW`/`FINVIZ`/`YAHOO` + "not corroborated" | say the figure is single-source |
+| All down | `NONE`, no value presented | avoid a stale or invented number |
 | Upstream markup changed | `degraded: true` + a named warning | avoid a silently empty or wrong response |
 
 ---
@@ -56,45 +60,70 @@ compares, and tells the agent what it is holding.
 
 ## The `data_provider` contract
 
-Every tool result carries exactly one of four values:
+Every tool result carries exactly one of five values. It states **coverage**, never agreement:
 
 | Value | Meaning |
 | --- | --- |
-| `BOTH` | Both providers answered and the compared values agree. Cross-verified. |
-| `TRADINGVIEW` | Only TradingView had this data. Served, but **not** cross-verified. |
-| `FINVIZ` | Only Finviz had this data. Served, but **not** cross-verified. |
-| `NONE` | Neither provider could supply it. No value is presented. |
+| `ALL` | Every provider that was asked answered. |
+| `TRADINGVIEW` | Only TradingView answered. Served, but **not** corroborated. |
+| `FINVIZ` | Only Finviz answered. Served, but **not** corroborated. |
+| `YAHOO` | Only Yahoo Finance answered. Served, but **not** corroborated. |
+| `NONE` | No provider could supply it. No value is presented. |
 
 ```jsonc
 {
-  "data_provider": "BOTH",
-  "verification": "VERIFIED",           // VERIFIED | UNVERIFIED | UNAVAILABLE
-  "notice": "Data came from BOTH providers ...",  // sentence to relay to the user
-  "data": { ... },                      // the reconciled payload — one value per field
-  "fields": { "price": "BOTH", "peers": "FINVIZ" },   // per-field provenance
-  "freshness": {                        // why `data` holds the value it does
-    "tradingview": "2026-11-03T21:00:01+00:00",
-    "finviz": "2026-11-03T20:59:00+00:00",
-    "chosen": "TRADINGVIEW",
-    "reason": "newest market print timestamp"
+  "data_provider": "ALL",
+  "verification": "MULTI_SOURCE",          // MULTI_SOURCE | SINGLE_SOURCE | UNAVAILABLE
+  "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO"],
+  "notice": "Every provider asked answered ...",   // sentence to relay to the user
+  "data": { ... },                         // the reconciled payload, one value per field
+  "fields": { "price": "ALL", "peers": "FINVIZ" }, // per-field provenance
+  "freshness": {                           // why `data` holds the value it does
+    "tradingview": "2026-11-04T00:59:53+00:00",
+    "finviz": "2026-11-04T10:42:00+00:00",
+    "yahoo": "2026-11-03T21:00:01+00:00",
+    "chosen": "FINVIZ",
+    "decision": "newest",                  // newest | tie | no_timestamp
+    "newest_print": "2026-11-04T10:42:00+00:00"
   },
-  "comparisons": [                      // the actual side-by-side numbers
-    { "field": "price", "tv": 331.9, "fv": 331.9,
-      "match": true, "diff": 0.0, "diff_pct": 0.0, "tolerance_pct": 0.5 }
+  "comparisons": [                         // the actual side-by-side numbers
+    { "field": "price",
+      "values": { "TRADINGVIEW": 331.9, "FINVIZ": 332.33, "YAHOO": 331.9 },
+      "match": true, "diff_pct": 0.1294, "tolerance_pct": 0.5 }
   ],
-  "sources": { "TRADINGVIEW": "...", "FINVIZ": "..." },
+  "resolutions": { "TRADINGVIEW": { "symbol": "NASDAQ:AAPL" }, ... },
+  "sources": { "TRADINGVIEW": "scanner.tradingview.com", "FINVIZ": "...", "YAHOO": "..." },
   "errors": [ { "provider": "FINVIZ", "code": "...", "message": "..." } ],
   "warnings": [ "..." ],
-  "degraded": false,                    // true when the health monitor saw drift/downtime
-  "generated_at": "2026-11-04T06:25:56+00:00"
+  "degraded": false,                       // true when the health monitor saw drift/downtime
+  "generated_at": "2026-11-04T10:43:02+00:00"
 }
 ```
 
-**Disagreements are never silently resolved.** If the providers report different prices, both values
-stay in `comparisons`, the field is named in `notice` and `warnings`, and the response stays `BOTH`
-(both *did* answer — they just disagree). An agent reading it can see exactly how far apart they are.
+**One value per compared field, and it is the newest print.** `data` holds a single price: the
+reading whose market print is newest. Ties are broken by the documented default order (`FINVIZ`,
+`TRADINGVIEW`, `YAHOO`). Every original reading stays in `comparisons.values`, and
+`freshness.decision` states which rule applied.
+
+**`ALL` does not mean "the values agree".** It means every provider asked answered. Agreement is a
+separate axis, reported per field in `comparisons[].match` and summarised in `notice`/`warnings`. Two
+of three providers answering is still `ALL`; `providers_answered` names which ones.
+
+**Disagreements are never silently resolved.** If the providers report different prices, all values
+stay in `comparisons`, the field is named in `notice` and `warnings`, and `data_provider` stays `ALL`.
+An agent reading it can see exactly how far apart they are.
 
 Full detail: [Response Contract](Response-Contract).
+
+---
+
+## Symbols are resolved per provider
+
+`XAUUSD` is `OANDA:XAUUSD` on TradingView, `^GSPC`-style aliasing for indices, a suffix for Yahoo FX
+and simply not carried by Finviz. [`symbols.py`](https://github.com/giraygokirmak/tapebasis/blob/main/src/tapebasis/symbols.py)
+resolves each query per provider, caches the result for an hour, and records the derivation in
+`resolutions`. A ticker is only returned if the provider can actually quote it, and a missing
+instrument becomes `NOT_ATTEMPTED`: a structural fact, not an error.
 
 ---
 
@@ -140,10 +169,13 @@ Details: [Getting Started](Getting-Started) · [Docker](Docker).
 
 ## Note on labelling
 
-The TradingView provider's price and OHLCV data actually come from Yahoo Finance's chart API, and its
-options chain from Yahoo's options endpoint. Responses say so in `sources`, and it is still labelled
-`TRADINGVIEW` because it is that provider's dataset — but it is not TradingView's own exchange feed,
-and the label should not be read as claiming it is.
+Every provider is asked for its own data: TradingView from `scanner.tradingview.com` and its chart
+websocket, Finviz from `finviz.com` HTML and JSON islands, Yahoo from `query1.finance.yahoo.com`.
+Nothing is proxied through another provider, and `sources` records the upstream each leg used.
+
+Where a capability exists on only some providers, that is stated, not simulated: options chains come
+from Finviz and Yahoo (TradingView contributes only the underlying price), backtests run twice on
+TradingView and Yahoo OHLCV, and Finviz is never asked for crypto, FX or commodity quotes.
 
 ---
 
@@ -152,8 +184,8 @@ and the label should not be read as claiming it is.
 Market data is provided as-is for research and automation. It is not investment advice, and scraped
 data can be delayed, incomplete or wrong. Cross-verification reduces the chance of a bad number
 reaching you; it does not eliminate it. Sentiment scores are a deterministic summary of headline
-tone — not a prediction, and not a trading signal.
+tone, not a prediction, and not a trading signal.
 
 ## License
 
-MIT — see [LICENSE](https://github.com/giraygokirmak/tapebasis/blob/main/LICENSE).
+MIT. See [LICENSE](https://github.com/giraygokirmak/tapebasis/blob/main/LICENSE).

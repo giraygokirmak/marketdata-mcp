@@ -2,51 +2,66 @@
 
 Every tool returns the same envelope. Learn it once and every tool is readable.
 
-## The four provider states
+## The five provider states
 
 | `data_provider` | `verification` | Meaning | What an agent should do |
 | --- | --- | --- | --- |
-| `BOTH` | `VERIFIED` | Both providers answered; compared fields agree | Quote the numbers; they were confirmed twice |
-| `TRADINGVIEW` | `UNVERIFIED` | Only TradingView answered | Quote, but say it is single-source and unverified |
-| `FINVIZ` | `UNVERIFIED` | Only Finviz answered | Same, from the Finviz side |
-| `NONE` | `UNAVAILABLE` | Neither answered | Say no data is available. Do not invent one. |
+| `ALL` | `MULTI_SOURCE` | Every provider that was asked answered | Quote the numbers; say how many sources covered them |
+| `TRADINGVIEW` | `SINGLE_SOURCE` | Only TradingView answered | Quote, but say it is single-source and not corroborated |
+| `FINVIZ` | `SINGLE_SOURCE` | Only Finviz answered | Same, from the Finviz side |
+| `YAHOO` | `SINGLE_SOURCE` | Only Yahoo Finance answered | Same, from the Yahoo side |
+| `NONE` | `UNAVAILABLE` | No provider answered | Say no data is available. Do not invent one. |
 
-`verification` is derived, never independent: `BOTH → VERIFIED`, a single provider `→ UNVERIFIED`,
-`NONE → UNAVAILABLE`.
+`verification` is derived, never independent: `ALL → MULTI_SOURCE`, a single provider
+`→ SINGLE_SOURCE`, `NONE → UNAVAILABLE`.
 
-**`BOTH` does not mean "the values agree".** It means both providers *answered*. Agreement is a
+**`ALL` does not mean "the values agree".** It means every provider *asked* answered. Agreement is a
 separate axis, reported per field in `comparisons[].match` and summarised in `notice`/`warnings`.
-Both answers being present but diverging is still `BOTH` — with the conflict named.
+Providers answering but diverging is still `ALL`, with the conflict named.
+
+**`ALL` does not mean all three.** A tool asks only the providers that could serve the field. If
+TradingView and Yahoo answer and Finviz has no page for the instrument, that response is `ALL`:
+every provider *asked* answered. `providers_answered` lists exactly which ones contributed, so
+coverage can be read precisely.
 
 ## Fields
 
 ### `data_provider`
-`"BOTH" | "TRADINGVIEW" | "FINVIZ" | "NONE"`. The single most important field in the response.
+`"ALL" | "TRADINGVIEW" | "FINVIZ" | "YAHOO" | "NONE"`. The single most important field in the
+response.
 
 ### `verification`
-`"VERIFIED" | "UNVERIFIED" | "UNAVAILABLE"`. Convenience mirror of the table above.
+`"MULTI_SOURCE" | "SINGLE_SOURCE" | "UNAVAILABLE"`. Convenience mirror of the table above.
+
+### `providers_answered`
+The provider labels that actually produced data for this response, in display order. Use this, not
+`data_provider` alone, to state coverage precisely ("three sources agreed" vs "two of three").
 
 ### `notice`
 One sentence, written to be relayed verbatim to a user. It always names the provider state. When
-providers disagree it names the disagreeing fields and says both readings are in `comparisons`. When
-the health monitor has seen drift, a `WARNING` is appended.
+providers disagree it names the disagreeing fields and says every reading is in `comparisons`. When a
+field could not be compared it says why. When the health monitor has seen drift, a `WARNING` is
+appended.
 
 ### `data`
 The reconciled payload. Its shape is tool-specific (a dict for `stock_quote`, a list for
 `stock_prices`, a nested object for `market_indices`). This is the only place a value should be read
 from.
 
-**One value per compared field.** When both providers answered, `data` holds exactly one price — the
-reading from whichever provider printed more recently. Both originals stay in `comparisons`, and
-`freshness` records which one won and why. An agent never has to reconcile two numbers to answer
-"what is the price", but it can always audit the choice.
+**One value per compared field.** `data` holds exactly one price, the reading whose market print is
+newest. Every original stays in `comparisons`, and `freshness` records which one won and why. An
+agent never has to reconcile several numbers to answer "what is the price", but it can always audit
+the choice.
 
 ### `fields`
-Per-field provenance: `{"price": "BOTH", "peers": "FINVIZ", "after_hours_price": "FINVIZ"}`.
+Per-field provenance: `{"price": "ALL", "peers": "FINVIZ", "after_hours_price": "FINVIZ"}`.
 
-Needed because most responses legitimately mix sources. `stock_quote` gets price from both providers
-but the 84-field fundamentals snapshot, company profile and peer list from Finviz alone — a blanket
-`BOTH` on the whole response would overclaim.
+Needed because most responses legitimately mix sources. `stock_quote` gets price from every provider
+that quotes it but the fundamentals snapshot, company profile and peer list from Finviz alone, a
+blanket `ALL` on the whole response would overclaim.
+
+A field is labelled `ALL` when two or more providers supplied it, and with the provider's name when
+only one did.
 
 ### `comparisons`
 One row per compared field:
@@ -54,54 +69,115 @@ One row per compared field:
 ```jsonc
 {
   "field": "price",
-  "tv": 331.9,          // TradingView reading, verbatim
-  "fv": 331.9,          // Finviz reading, verbatim
-  "match": true,        // null when either side is non-numeric
-  "diff": 0.0,          // absolute difference
-  "diff_pct": 0.0,      // relative difference, %
-  "tolerance_pct": 0.5, // threshold this field was judged against
-  "chosen": "TRADINGVIEW"  // which reading went into `data`
+  "values": { "TRADINGVIEW": 331.9, "FINVIZ": 332.33, "YAHOO": 331.9 },  // verbatim
+  "match": true,          // null when no pair could be compared
+  "diff": 0.43,           // largest absolute gap among comparable pairs
+  "diff_pct": 0.1294,     // largest relative gap, %
+  "tolerance_pct": 0.5,   // threshold this field was judged against
+  "chosen": "FINVIZ",     // which reading went into `data`
+  "pairs": [              // every pairwise comparison, so no pair is hidden
+    { "between": ["TRADINGVIEW", "FINVIZ"], "tv": 331.9, "fv": 332.33,
+      "match": true, "diff": 0.43, "diff_pct": 0.1294, "tolerance_pct": 0.5 },
+    { "between": ["TRADINGVIEW", "YAHOO"], "tv": 331.9, "fv": 331.9,
+      "match": true, "diff": 0.0, "diff_pct": 0.0, "tolerance_pct": 0.5 }
+  ]
 }
 ```
 
-`match: null` means the comparison was impossible (a non-numeric or missing value) — **not** a
-mismatch. `match: false` is a real disagreement.
+`match` is the aggregate: `true` when every comparable pair agrees, `false` when any pair disagrees,
+`null` when fewer than two providers reported a usable value.
 
-### `freshness`
-Present when both providers answered **and** at least one reported a usable print time. Tools that
-compare non-price fields (index levels, row counts) omit it entirely rather than announce that no
-timestamp existed:
+The `tv`/`fv` keys inside a pair are historical names for "first reading" and "second reading"; the
+`between` list names the providers unambiguously and is the field to read.
+
+### `comparisons[].not_comparable`
+Set on a field whose readings cannot be legitimately compared, with the reason:
 
 ```jsonc
 {
-  "tradingview": "2026-11-03T21:00:01+00:00",   // market print time, UTC
-  "finviz": "2026-11-03T20:59:00+00:00",
-  "chosen": "TRADINGVIEW",
-  "reason": "newest market print timestamp"
+  "field": "change_percent",
+  "values": { "TRADINGVIEW": -1.8976, "FINVIZ": 0.13, "YAHOO": -1.8976 },
+  "match": null,
+  "not_comparable": true,
+  "pairs": [
+    { "between": ["TRADINGVIEW", "FINVIZ"], "match": null,
+      "not_comparable": "prints are 9.7h apart; this field is measured against a session-relative baseline, so the readings are not comparable" }
+  ]
 }
 ```
 
-These are **print** times, not fetch times. When both timestamps are identical, or neither can be
-parsed, `chosen` is `FINVIZ` and `reason` says so — a fixed default, not an implicit preference.
+A day-change percentage or a session volume is measured against the previous close of the session the
+print belongs to. Two providers looking at different sessions legitimately differ, so calling that a
+"conflict" would be a false alarm. The pair is excluded from the agreement decision, every reading
+stays visible, and the field is listed in `warnings` as not cross-checked.
 
-`reason` is one of:
+`match: null` **without** `not_comparable` means the comparison was impossible (a non-numeric or
+missing value). `match: false` is a real disagreement.
 
-| `reason` | Meaning |
-| --- | --- |
-| `newest market print timestamp` | One provider printed strictly later; its values were used |
-| `timestamps identical; Finviz is the documented default` | Both printed at the same instant |
-| `no usable market timestamp from either provider; ...` | Neither side exposed a parseable print time |
+### `freshness`
+Present when a comparison actually happened **and** at least one provider reported a usable print
+time. Tools that compare non-price fields (index levels, row counts) omit it entirely rather than
+announce that no timestamp existed:
+
+```jsonc
+{
+  "tradingview": "2026-11-04T00:59:53+00:00",   // market print time, UTC
+  "finviz": "2026-11-04T10:42:00+00:00",
+  "yahoo": "2026-11-03T21:00:01+00:00",
+  "chosen": "FINVIZ",
+  "decision": "newest",
+  "newest_print": "2026-11-04T10:42:00+00:00",
+  "reason": "FINVIZ printed most recently (2026-11-04T10:42:00+00:00)"
+}
+```
+
+These are **print** times, not fetch times. `decision` is the machine-readable outcome; read it
+instead of parsing `reason`:
+
+| `decision` | Meaning | Extra keys |
+| --- | --- | --- |
+| `newest` | One provider printed strictly later; its values were used | `newest_print` |
+| `tie` | Several printed at the same newest instant | `newest_print`, `tied` |
+| `no_timestamp` | No provider exposed a parseable print time | - |
+
+Only providers that share the newest instant are tie-break candidates, so a stale provider can never
+win a tie against fresher ones. Ties are broken by the documented order (`FINVIZ`,
+`TRADINGVIEW`, `YAHOO`); with no usable timestamp at all, the value comes from the first provider in
+that order that answered. The order is fixed and stated in `reason`, never implicit.
+
+### `resolutions`
+How each provider's ticker was derived for this call:
+
+```jsonc
+{
+  "TRADINGVIEW": { "query": "AAPL", "provider": "TRADINGVIEW",
+                   "symbol": "NASDAQ:AAPL", "venue": "NASDAQ",
+                   "method": "search", "confidence": 0.75, "note": "" },
+  "FINVIZ":      { "symbol": "AAPL", "method": "normalise", ... },
+  "YAHOO":       { "symbol": "AAPL", "method": "alias", ... }
+}
+```
+
+`method` is one of `explicit` (the caller gave `EXCHANGE:SYMBOL`), `alias` (a documented mechanical
+rule or index table), `search` (the provider's own symbol search, verified against its quote
+endpoint), or `none` (not carried). A `none` resolution carries a `note` explaining why, and becomes
+`NOT_ATTEMPTED` rather than an error.
+
+This is the field to read when a symbol behaved unexpectedly. `XAUUSD` shows
+`OANDA:XAUUSD` for TradingView, no Yahoo ticker (Yahoo has no spot-gold pair, `XAUUSD=X` is a 404)
+and a Finviz note saying it carries US equities only.
 
 ### `sources`
 Where each provider's data actually came from: upstream URL or dataset name.
 
 ```jsonc
-{ "TRADINGVIEW": "Yahoo Finance chart API (via TradingView provider)",
-  "FINVIZ": "https://finviz.com/stock?t=AAPL" }
+{ "TRADINGVIEW": "scanner.tradingview.com",
+  "FINVIZ": "https://finviz.com/stock?t=AAPL",
+  "YAHOO": "query1.finance.yahoo.com chart API" }
 ```
 
-This is the honesty field. The `TRADINGVIEW` label names the provider *dataset*, and `sources` states
-when that dataset is itself Yahoo Finance.
+This is the honesty field. Each label names the upstream that was actually called, no leg proxies
+another.
 
 ### `errors`
 Real failures only:
@@ -110,15 +186,16 @@ Real failures only:
 { "provider": "FINVIZ", "code": "UPSTREAM_TIMEOUT", "message": "..." }
 ```
 
-`NOT_ATTEMPTED` is **excluded**. It means "this provider has no such capability" (Finviz has no
-futures feed), which is a structural fact, not an error.
+`NOT_ATTEMPTED` is **excluded**. It means "this provider has no such capability" (Finviz has no spot
+gold quote, TradingView publishes no options chain), which is a structural fact, not an error.
 
 Common codes: `UPSTREAM_TIMEOUT`, `UPSTREAM_RATE_LIMIT`, `UPSTREAM_BLOCKED`, `UPSTREAM_ERROR`,
 `NO_DATA`, `PARSE_ERROR`, `INVALID_TICKER`, `NOT_CONFIGURED`, `PROVIDER_ERROR`.
 
 ### `warnings`
-Human-readable cautions. A disagreement adds `"Providers disagree on: price"`. Health drift adds a
-warning naming the affected upstream.
+Human-readable cautions. A disagreement adds `"Providers disagree on: price"`. A field that could not
+be compared adds `"Not cross-checked (providers' prints belong to different sessions): change_percent,
+volume"`. Health drift adds a warning naming the affected upstream.
 
 ### `degraded`
 `true` when the health monitor reports drift or an outage **for a provider this call actually used**.
@@ -140,28 +217,62 @@ readings are not flagged over rounding noise.
 | P/E | 2 % | Rounding in the Finviz snapshot |
 | RSI(14) | 5 % (floor 0.5) | Different lookback windows |
 | volume | 1 % | Intraday accumulation timing |
+| index level | 0.5 % | Same index, different print times |
+| VIX level | 3 % | A volatility gauge that moves percent-level within a minute |
 | options volume | 5 % ; open interest 1 % | Different snapshot moments |
+| backtest metric | 0–5 % per metric | Two independent OHLCV feeds |
 
-Tolerances are per-field in `tools_market._quote_specs()` and the comparison sites, and are echoed
+Tolerances are per-field in `tools_market._quote_specs()` and at the comparison sites, and are echoed
 back in each `comparisons` row.
+
+Fields marked session-relative (`change_percent`, `previous_close`, `volume`) also carry
+`max_skew_seconds = 3600`: readings more than an hour apart are reported as *not comparable* rather
+than as a disagreement. The price itself is still compared, because a price stays comparable across
+minutes while a session baseline does not.
+
+## A worked three-provider response
+
+```jsonc
+{
+  "data_provider": "ALL",
+  "verification": "MULTI_SOURCE",
+  "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO"],
+  "notice": "Every provider asked answered (TradingView, Finviz and Yahoo Finance). Coverage is ALL; agreement is a separate axis. Compared fields agree within tolerance. The value shown is FINVIZ's because it printed more recently than the other providers'. Not cross-checked because the providers' prints belong to different sessions: change_percent, previous_close, volume.",
+  "data": { "price": 332.33, "change_percent": 0.13, ... },   // one value per field
+  "fields": { "price": "ALL", "peers": "FINVIZ", ... },
+  "freshness": { "chosen": "FINVIZ", "decision": "newest",
+                 "reason": "FINVIZ printed most recently (2026-11-04T10:42:00+00:00)" },
+  "comparisons": [
+    { "field": "price", "match": true,
+      "values": { "TRADINGVIEW": 331.9, "FINVIZ": 332.33, "YAHOO": 331.9 },
+      "diff_pct": 0.1294, "chosen": "FINVIZ" },
+    { "field": "change_percent", "match": null, "not_comparable": true,
+      "values": { "TRADINGVIEW": -1.8976, "FINVIZ": 0.13, "YAHOO": -1.8976 } }
+  ],
+  "warnings": ["Not cross-checked (providers' prints belong to different sessions): change_percent, previous_close, volume"],
+  "degraded": false
+}
+```
+
+Read it as: *all three answered. Their prices agree within 0.13 %, so the price shown is a
+three-way-corroborated reading. Finviz is mid-session while the others are at the prior close, so the
+day-change figures were not compared, and the response says so rather than pretending they conflicted
+or that they agreed.*
 
 ## A worked disagreement
 
 ```jsonc
 {
-  "data_provider": "BOTH",
-  "verification": "VERIFIED",
-  "notice": "Data came from BOTH providers ... NOTE: the two providers disagree on price; both readings appear in `comparisons` and the response holds a single value from TRADINGVIEW (the newer print). The conflict is reported, not silently resolved.",
-  "data": { "price": 331.9, ... },          // one value: the fresher print
-  "fields": { "price": "BOTH", ... },
-  "freshness": {
-    "tradingview": "2026-11-03T21:00:01+00:00",
-    "finviz": "2026-11-03T20:59:00+00:00",
-    "chosen": "TRADINGVIEW",
-    "reason": "newest market print timestamp"
-  },
+  "data_provider": "ALL",
+  "verification": "MULTI_SOURCE",
+  "notice": "Every provider asked answered ... NOTE: the providers disagree on price; every reading appears in `comparisons` and the response holds a single value. The value shown is TRADINGVIEW's because it printed more recently. The conflict is reported, not silently resolved.",
+  "data": { "price": 331.9, ... },          // one value: the newest print
+  "fields": { "price": "ALL", ... },
+  "freshness": { "chosen": "TRADINGVIEW", "decision": "newest",
+                 "reason": "TRADINGVIEW printed most recently (2026-11-03T21:00:01+00:00)" },
   "comparisons": [
-    { "field": "price", "tv": 331.9, "fv": 300.0,
+    { "field": "price",
+      "values": { "TRADINGVIEW": 331.9, "FINVIZ": 300.0 },
       "match": false, "diff_pct": 9.6, "chosen": "TRADINGVIEW" }
   ],
   "warnings": ["Providers disagree on: price"],
@@ -169,18 +280,19 @@ back in each `comparisons` row.
 }
 ```
 
-Read it as: *both providers answered, they contradict each other by 9.6 %, and nothing was hidden.*
-`data.price` holds **one** value — the fresher print (TradingView's here) — the losing value is one
-field away in `comparisons`, and the notice says exactly that.
+Read it as: *every provider answered, two contradict each other by 9.6 %, and nothing was hidden.*
+`data.price` holds **one** value, the newest print. The losing value is one field away in
+`comparisons`, and the notice says exactly that.
 
 ## Why not just return one number?
 
-It does return one number — but the envelope keeps the second one visible next to it. Silently
+It does return one number, but the envelope keeps the other readings visible next to it. Silently
 discarding a contradicting reading is how a wrong number becomes authoritative: if an agent cannot
-see that a second independent source disagreed, it cannot warn its user. One value in `data`, both
+see that another independent source disagreed, it cannot warn its user. One value in `data`, all
 values in `comparisons`, and the reason for the choice in `freshness`.
 
 ## Related
 
-- [Tools Reference](Tools-Reference) — which fields each tool compares
-- [Health Monitor](Health-Monitor) — how `degraded` is decided
+- [Tools Reference](Tools-Reference): which fields each tool compares
+- [Health Monitor](Health-Monitor): how `degraded` is decided
+- [Design Decisions](Design-Decisions): why the contract looks like this

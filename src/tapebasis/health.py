@@ -1,12 +1,12 @@
 """Upstream health and schema-drift monitor.
 
-Both providers scrape or call undocumented upstreams (finviz.com's HTML and
-unversioned JSON islands, TradingView's scanner API, Yahoo's chart API). Any of
-them can change a path, a JSON key or a status code without notice. When that
-happens, tools start failing or silently returning zeros.
+All three providers scrape or call undocumented upstreams (finviz.com's HTML
+and unversioned JSON islands, TradingView's scanner and symbol search, Yahoo's
+chart API). Any of them can change a path, a JSON key or a status code without
+notice. When that happens, tools start failing or silently returning zeros.
 
-This module probes each upstream directly — independently of the provider code
-paths — and classifies the result:
+This module probes each upstream directly, independently of the provider code
+paths, and classifies the result:
 
 ``OK``        HTTP status and payload shape match the recorded baseline.
 ``DRIFT``     The upstream answered, but the status/shape no longer matches the
@@ -35,6 +35,10 @@ import httpx
 
 TRADINGVIEW = "TRADINGVIEW"
 FINVIZ = "FINVIZ"
+YAHOO = "YAHOO"
+
+#: Every provider the monitor probes, in display order.
+PROVIDERS: tuple[str, ...] = (TRADINGVIEW, FINVIZ, YAHOO)
 
 STATUS_OK = "OK"
 STATUS_DRIFT = "DRIFT"
@@ -147,8 +151,13 @@ def _probes() -> list[Probe]:
 
     Each probe maps to a concrete place in the provider code:
     ``finviz.core.services.finviz_client`` / ``quote_service`` /
-    ``market_service``, and ``tradingview.core.services.stock_screener_service``
-    / ``yahoo_finance_service``.
+    ``market_service``, ``providers.tradingview.native`` (scanner + chart
+    websocket), and ``yh_access`` (Yahoo chart API).
+
+    A probe must exercise the endpoint the provider code actually uses, on the
+    provider that uses it. Yahoo used to be probed under TRADINGVIEW because the
+    TradingView leg proxied it; that hid a whole provider outage, so it is now
+    its own row.
     """
     return [
         # ── Finviz ──────────────────────────────────────────────────────────
@@ -176,25 +185,53 @@ def _probes() -> list[Probe]:
             headers={"User-Agent": BROWSER_UA, "Accept": "application/json, text/plain, */*"},
             required_keys=("html",),
         ),
-        # ── TradingView ─────────────────────────────────────────────────────
+        # ── TradingView (native) ────────────────────────────────────────────
         Probe(
             id="tradingview.scanner_api",
             provider=TRADINGVIEW,
-            description="scanner.tradingview.com america scan (screener/prices)",
-            url="https://scanner.tradingview.com/america/scan",
+            description="scanner.tradingview.com global scan (quotes/fundamentals)",
+            url="https://scanner.tradingview.com/global/scan",
             method="POST",
             headers={"Content-Type": "application/json", "User-Agent": BROWSER_UA},
             json_body={
-                "symbols": {"tickers": ["NASDAQ:AAPL"]},
-                "columns": ["name", "close", "change"],
+                "symbols": {"tickers": ["OANDA:XAUUSD", "NASDAQ:AAPL"]},
+                "columns": ["name", "close", "change", "update_time"],
             },
             required_keys=("totalCount", "data.0.d"),
         ),
         Probe(
-            id="tradingview.yahoo_chart_api",
+            id="tradingview.symbol_search",
             provider=TRADINGVIEW,
+            description="symbol-search.tradingview.com v3 (dynamic symbol resolution)",
+            url=(
+                "https://symbol-search.tradingview.com/symbol_search/v3/"
+                "?text=XAUUSD&hl=1&exchange=&lang=en&search_type=&domain=production&sort_by_country=US"
+            ),
+            headers={"User-Agent": BROWSER_UA, "Origin": "https://www.tradingview.com"},
+            required_keys=("symbols",),
+        ),
+        # ── Yahoo Finance ───────────────────────────────────────────────────
+        Probe(
+            id="yahoo.chart_api",
+            provider=YAHOO,
             description="query1.finance.yahoo.com chart API (quotes/OHLCV)",
             url="https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=5d",
+            headers={"User-Agent": BROWSER_UA, "Accept": "application/json"},
+            required_keys=("chart.result.0.meta", "chart.result.0.timestamp"),
+        ),
+        Probe(
+            id="yahoo.chart_fx",
+            provider=YAHOO,
+            description="Yahoo chart API for an FX pair (the EURUSD=X resolution path)",
+            url="https://query1.finance.yahoo.com/v8/finance/chart/EURUSD%3DX?interval=1d&range=5d",
+            headers={"User-Agent": BROWSER_UA, "Accept": "application/json"},
+            required_keys=("chart.result.0.meta", "chart.result.0.timestamp"),
+        ),
+        Probe(
+            id="yahoo.chart_crypto",
+            provider=YAHOO,
+            description="Yahoo chart API for a crypto pair (the BTC-USD resolution path)",
+            url="https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?interval=1d&range=5d",
             headers={"User-Agent": BROWSER_UA, "Accept": "application/json"},
             required_keys=("chart.result.0.meta", "chart.result.0.timestamp"),
         ),
@@ -328,7 +365,7 @@ class HealthMonitor:
                 result.message = (
                     "response no longer contains "
                     + ", ".join(repr(m) for m in missing)
-                    + " — finviz likely changed the page markup"
+                    + ": finviz likely changed the page markup"
                 )
             else:
                 result.status = STATUS_OK
@@ -340,7 +377,7 @@ class HealthMonitor:
         except ValueError:
             result.status = STATUS_DRIFT
             result.drift = True
-            result.message = "response is no longer valid JSON — the endpoint may have moved"
+            result.message = "response is no longer valid JSON; the endpoint may have moved"
             return result
 
         missing = [key for key in probe.required_keys if not _has_key(payload, key)]
@@ -357,7 +394,7 @@ class HealthMonitor:
             result.message = (
                 "missing expected key(s) "
                 + ", ".join(repr(k) for k in missing)
-                + " — upstream API/schema changed"
+                + ": upstream API/schema changed"
             )
             return result
 
@@ -380,7 +417,7 @@ class HealthMonitor:
             result.message = (
                 "payload shape changed since baseline"
                 + (f" ({'; '.join(detail)})" if detail else "")
-                + " — upstream schema drifted"
+                + ": upstream schema drifted"
             )
             return result
 
@@ -486,23 +523,35 @@ class HealthMonitor:
 
     def warnings_for(self, providers: Iterable[str]) -> list[str]:
         self.ensure_started()
-        wanted = set(providers)
+        wanted = {str(p).upper() for p in providers}
+        # ``ALL`` in a scoped call means "every provider this response touched";
+        # it must not silently widen to providers that were not asked.
+        wildcard = not wanted or "ALL" in wanted
         return [
             f"{issue['provider']} health {issue['status']} on {issue['probe']}: {issue['message']}"
             for issue in self.issues()
-            if issue["provider"] in wanted or "BOTH" in wanted
+            if wildcard or issue["provider"] in wanted
         ]
 
     def summary(self) -> dict[str, Any]:
         self.ensure_started()
+        from .ratelimit import snapshot as limiter_snapshot
+
+        try:
+            limiters = limiter_snapshot()
+        except Exception:  # noqa: BLE001 - health must never fail the call
+            limiters = {}
         return {
             "providers": {
-                provider: self.provider_status(provider)
-                for provider in (TRADINGVIEW, FINVIZ)
+                provider: self.provider_status(provider) for provider in PROVIDERS
             },
             "degraded": self.degraded(),
             "issues": self.issues(),
             "probes": [r.to_dict() for r in self.results.values()],
+            # Per-provider pacing/cooldown state. A provider that is OK but
+            # cooling down is still serving slowly, and an agent needs to know
+            # that before it retries.
+            "rate_limits": limiters,
             "last_run_epoch": self._last_run or None,
             "state_path": state_path(),
             "interval_seconds": self.interval,

@@ -4,15 +4,14 @@ Smart-money / banker-fund proxy indicators.
 Volume-and-momentum decompositions in the spirit of the popular TradingView
 "banker fund" family (MCDX, blackcat L3 fund-flow oscillators, smart-money
 scripts). These are ORIGINAL implementations of the publicly documented
-formula shapes — not copies of any closed-source script (MCDX Plus, LOKEN
+formula shapes, not copies of any closed-source script (MCDX Plus, LOKEN
 etc. are proprietary; their exact parameters are unpublished). Every formula
 used here is stated explicitly in its docstring so results are reproducible.
 
 Honesty note (surfaced to callers in every payload): these indicators infer
 "institutional" behaviour purely from price/volume statistics. They are NOT
 actual institutional-flow data. For EGX, the exchange publishes real daily
-investor-type flows (Egyptians/Arabs/Foreigners, institutions vs retail) —
-that dataset is the genuine hot-money signal and a candidate future
+investor-type flows (Egyptians/Arabs/Foreigners, institutions vs retail), that dataset is the genuine hot-money signal and a candidate future
 integration; these proxies are the best that OHLCV alone can do.
 
 Data source: Yahoo Finance daily/hourly OHLCV via the backtest service's
@@ -29,7 +28,7 @@ from tapebasis.providers.tradingview.core.services.backtest_service import _fetc
 from tapebasis.providers.tradingview.core.services.indicators_calc import calc_ema, calc_rsi
 
 _DISCLAIMER = (
-    "Price/volume-derived proxy for institutional activity — not actual "
+    "Price/volume-derived proxy for institutional activity, not actual "
     "fund-flow data. Not investment advice."
 )
 
@@ -61,7 +60,7 @@ def yahoo_symbol_for(symbol: str, exchange: str) -> str:
 def compute_mcdx(candles: List[dict]) -> Dict[str, Any]:
     """RSI-horizon decomposition in the style of the public MCDX indicator.
 
-    Formula (explicit — this is our documented variant, 0..20 scale each):
+    Formula (explicit, this is our documented variant, 0..20 scale each):
         banker    = clamp((RSI(close, 50) - 40) * 1.5, 0, 20)
         hot_money = clamp((RSI(close, 40) - 30) * 1.5, 0, 20)
         retail    = clamp((RSI(close, 14) - 30) * 1.5, 0, 20)
@@ -189,8 +188,8 @@ def compute_smart_money_composite(candles: List[dict]) -> Dict[str, Any]:
     """Composite accumulation/distribution score from four volume-flow reads.
 
     Components (each mapped to 0..100, equally weighted):
-      - CMF(20):  Chaikin Money Flow — close-location-weighted volume share.
-      - MFI(14):  Money Flow Index — volume-weighted RSI of typical price.
+      - CMF(20):  Chaikin Money Flow, close-location-weighted volume share.
+      - MFI(14):  Money Flow Index, volume-weighted RSI of typical price.
       - OBV 20-bar trend: net on-balance volume over 20 bars, normalised by
         total 20-bar volume.
       - Up/down volume balance (20 bars): volume on up-closes vs down-closes.
@@ -359,7 +358,7 @@ def scan_egx_smart_money(
 ) -> dict:
     """Rank an EGX index's constituents by smart-money evidence.
 
-    Fetches Yahoo history per constituent (bounded thread pool — Yahoo has no
+    Fetches Yahoo history per constituent (bounded thread pool, Yahoo has no
     batch OHLCV endpoint) and ranks by the volume-flow composite score, with
     the MCDX-style and oscillator reads attached per row.
     """

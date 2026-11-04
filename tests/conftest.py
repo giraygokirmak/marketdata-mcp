@@ -2,6 +2,10 @@
 
 No test in this directory touches a live upstream: provider calls are replaced
 with deterministic fakes, and the health state is redirected to a temp directory.
+
+Each fixture is shaped the way its *own* provider actually answers, not the way
+another one does, a shared shape would hide exactly the mapping bugs these
+tests exist to catch.
 """
 from __future__ import annotations
 
@@ -12,6 +16,11 @@ import pytest
 # Health state must never be written to the real home directory from tests.
 os.environ.setdefault("TAPEBASIS_HEALTH_STATE", "/tmp/tapebasis-test/health.json")
 os.environ.setdefault("TAPEBASIS_HEALTH_ENABLED", "false")
+
+#: 2026-11-03 21:00:01 UTC, the US close, used across fixtures so freshness
+#: arbitration has real, comparable instants to order.
+CLOSE_EPOCH = 1793739601
+CLOSE_ISO = "2026-11-03T21:00:01+00:00"
 
 
 @pytest.fixture(autouse=True)
@@ -31,22 +40,66 @@ def _isolate_health_state(tmp_path, monkeypatch):
 
 @pytest.fixture
 def tv_quote():
-    """A representative TradingView/Yahoo quote payload."""
+    """A TradingView scanner row, as ``native.scan`` returns it."""
     return {
+        "ticker": "NASDAQ:AAPL",
+        "name": "AAPL",
+        "description": "Apple Inc.",
+        "close": 331.9,
+        "change": -1.9,
+        "open": 337.1,
+        "high": 338.0,
+        "low": 330.5,
+        "volume": 63160515,
+        "update_time": CLOSE_EPOCH,
+        "update_mode": "delayed_streaming_900",
+        "currency": "USD",
+        "exchange": "NASDAQ",
+        "type": "stock",
+        "subtype": "common",
+        "market_cap_basic": 4.84381e12,
+        "price_earnings_ttm": 36.98,
+        "earnings_per_share_basic_ttm": 8.97,
+        "dividends_yield_current": 0.42,
+        "sector": "Technology Services",
+        "industry": "Computers",
+        "price_52_week_high": 351.73,
+        "price_52_week_low": 243.42,
+        "beta_1_year": 1.19,
+        "relative_volume_10d_calc": 0.94,
+        "RSI": 41.7,
+        "ATR": 7.44,
+        "earnings_release_next_date": 1801742400,
+        "earnings_release_date": 1793655000,
+        "premarket_close": 332.47,
+        "premarket_change": 0.17,
+        "premarket_volume": 67876,
+        "postmarket_close": None,
+        "postmarket_change": None,
+        "postmarket_volume": None,
+        "prev_close_price": None,
+    }
+
+
+@pytest.fixture
+def yh_quote():
+    """A Yahoo chart-API quote, as ``yh_access.quote`` returns it."""
+    return {
+        "symbol": "AAPL",
         "price": 331.9,
-        "previous_close": 338.32,
-        "change": -6.42,
         "change_pct": -1.9,
+        "previous_close": 338.32,
         "currency": "USD",
         "exchange": "NMS",
         "market_state": "CLOSED",
+        "market_time": CLOSE_EPOCH,
+        "earnings_timestamp": 1801742400,
         "52w_high": 351.73,
         "52w_low": 243.42,
-        "price_source": "quote",
+        "volume": 63160515,
+        "company": "Apple Inc.",
         "quote_stale": False,
-        "source": "Yahoo Finance",
-        # regularMarketTime for the 2026-11-03 US close.
-        "market_time": "2026-11-03T21:00:01+00:00",
+        "source": "Yahoo Finance chart API",
     }
 
 

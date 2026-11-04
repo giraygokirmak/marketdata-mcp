@@ -1,8 +1,8 @@
 """
-Bitcoin Market Pulse — single-call macro context for crypto questions.
+Bitcoin Market Pulse, single-call macro context for crypto questions.
 
 Why this exists: when a user asks Claude "should I buy SOL?" the right answer
-isn't just SOL's chart — it's also "what is BTC doing, and is dominance rising
+isn't just SOL's chart; it's also "what is BTC doing, and is dominance rising
 or falling?". A SOL setup that looks great in isolation can be a death trap
 when BTC is dumping and dominance is climbing (capital flight to BTC, alts
 bleed regardless of their own technicals).

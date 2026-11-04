@@ -13,7 +13,7 @@ same envelope shape so MCP clients see a uniform error API.
 Migration notes
 ---------------
 - Tools that adopt this format return ``dict`` (the envelope) on error and
-  their normal type on success — the static return type becomes a union.
+  their normal type on success, the static return type becomes a union.
 - Callers must check ``isinstance(result, dict) and "error" in result``
   instead of substring-matching previous ``{"error": "Analysis failed: ..."}``
   strings.
@@ -63,7 +63,7 @@ def make_error(code: Union[ErrorCode, str], message: str, **extra: Any) -> dict[
             to import the enum (and from external contributions adopting the
             envelope shape).
         message: Human-readable description suitable for showing to a user.
-        **extra: Additional structured fields — e.g. ``retry_after_s=30``,
+        **extra: Additional structured fields, e.g. ``retry_after_s=30``,
             ``batches_attempted=5``, ``first_error="..."``, ``symbol="AAPL"``.
 
     Returns:
@@ -118,7 +118,7 @@ class BatchExecutionError(Exception):
 
     The service layer raises this so the MCP tool wrapper at the boundary
     can convert it to an :func:`make_error` envelope with full context.
-    Callers must not swallow it silently — that defeats the whole point of
+    Callers must not swallow it silently: that defeats the whole point of
     the sentinel.
 
     Attributes:
@@ -147,7 +147,7 @@ class PartialDataError(Exception):
     """Raised when a batched scan aborted early but still produced rows.
 
     Wall-clock budgets and consecutive-failure bails used to return a plain
-    truncated list, indistinguishable from a complete scan — the abort reason
+    truncated list, indistinguishable from a complete scan: the abort reason
     went only to stderr. This carries the partial rows plus scan telemetry so
     the MCP boundary can return them WITH a PARTIAL_DATA envelope.
 

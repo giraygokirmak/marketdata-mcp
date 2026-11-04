@@ -1,7 +1,7 @@
 """
-Backtesting Service for the TradingView provider — v3 (v0.7.0)
+Backtesting Service for the TradingView provider, v3 (v0.7.0)
 
-Pure Python — no pandas, no numpy, no external backtesting libraries.
+Pure Python, no pandas, no numpy, no external backtesting libraries.
 
 Supported strategies (6):
   rsi, bollinger, macd, ema_cross, supertrend, donchian
@@ -36,7 +36,7 @@ _VALID_INTERVALS = {"1d", "1h"}
 # Bars per year: 252 trading days; US regular session is 6.5 hours → 6.5
 # hourly bars per day. Callers on other markets (e.g. EGX: ~245 sessions of
 # 4.5h, EGP risk-free ~25%) should pass periods_per_year / risk_free_rate
-# explicitly — these are US-market defaults.
+# explicitly, these are US-market defaults.
 _ANNUALIZATION = {"1d": 252, "1h": int(252 * 6.5)}
 _DEFAULT_RISK_FREE = 0.04  # annual, decimal
 
@@ -318,7 +318,7 @@ _STRATEGY_MAP = {
 }
 
 # Bars each strategy needs before its slowest indicator produces signals.
-# Walk-forward test slices shorter than this cannot trade at all — scoring
+# Walk-forward test slices shorter than this cannot trade at all, scoring
 # them 0.0 falsely reads as "fails out-of-sample" when the real cause is
 # "window too small to even warm up".
 _STRATEGY_WARMUP_BARS = {
@@ -542,7 +542,7 @@ def _buy_and_hold_return(
     commission_pct: float = 0.0,
     slippage_pct: float = 0.0,
 ) -> float:
-    """Benchmark return. Pass the strategy's costs so the comparison is fair —
+    """Benchmark return. Pass the strategy's costs so the comparison is fair:
     the cost-free benchmark gave buy-and-hold a structural edge in
     vs_buy_and_hold_pct (one round trip of the same commission+slippage)."""
     if len(candles) < 2:
@@ -600,6 +600,8 @@ def run_backtest(
     include_equity_curve: bool = False,
     risk_free_rate: Optional[float] = None,
     periods_per_year: Optional[int] = None,
+    candles: Optional[list] = None,
+    data_source: Optional[str] = None,
 ) -> dict:
     strategy = strategy.lower().strip()
     period   = period.lower().strip()
@@ -616,10 +618,17 @@ def run_backtest(
     if num_err:
         return {"error": num_err}
 
-    try:
-        candles = _fetch_ohlcv(symbol, period, interval)
-    except Exception as e:
-        return {"error": f"Failed to fetch data for '{symbol}': {e}"}
+    # ``candles`` lets the caller supply history it already fetched from a
+    # specific provider, so the engine never silently mixes sources: the
+    # response says which feed produced the bars it traded.
+    if not candles:
+        try:
+            candles = _fetch_ohlcv(symbol, period, interval)
+            data_source = data_source or "Yahoo Finance"
+        except Exception as e:
+            return {"error": f"Failed to fetch data for '{symbol}': {e}"}
+    else:
+        data_source = data_source or "supplied candles"
 
     min_bars = 30 if interval == "1d" else 100
     if len(candles) < min_bars:
@@ -653,7 +662,7 @@ def run_backtest(
         "buy_and_hold_return_pct": bnh,
         "vs_buy_and_hold_pct":     round(metrics["total_return_pct"] - bnh, 2),
         "recent_trades":           trades[-5:],
-        "data_source":             "Yahoo Finance",
+        "data_source":             data_source,
         "disclaimer":              "Past performance does not guarantee future results. For educational use only.",
         "timestamp":               datetime.now(timezone.utc).isoformat(),
     }
@@ -678,6 +687,8 @@ def compare_strategies(
     interval: str = "1d",
     risk_free_rate: Optional[float] = None,
     periods_per_year: Optional[int] = None,
+    candles: Optional[list] = None,
+    data_source: Optional[str] = None,
 ) -> dict:
     """Run all 9 strategies on one symbol. Supports 1d and 1h intervals."""
     period   = period.lower().strip()
@@ -691,10 +702,14 @@ def compare_strategies(
     if num_err:
         return {"error": num_err}
 
-    try:
-        candles = _fetch_ohlcv(symbol, period, interval)
-    except Exception as e:
-        return {"error": f"Failed to fetch data for '{symbol}': {e}"}
+    if not candles:
+        try:
+            candles = _fetch_ohlcv(symbol, period, interval)
+            data_source = data_source or "Yahoo Finance"
+        except Exception as e:
+            return {"error": f"Failed to fetch data for '{symbol}': {e}"}
+    else:
+        data_source = data_source or "supplied candles"
 
     min_bars = 30 if interval == "1d" else 100
     if len(candles) < min_bars:
@@ -748,6 +763,7 @@ def compare_strategies(
         "winner":                  results[0]["strategy"] if results else None,
         "ranking":                 results,
         "warnings":                warnings,
+        "data_source":             data_source,
         "disclaimer":              "Past performance does not guarantee future results.",
         "timestamp":               datetime.now(timezone.utc).isoformat(),
     }
@@ -785,7 +801,7 @@ def walk_forward_backtest(
     periods_per_year: Optional[int] = None,
 ) -> dict:
     """
-    Walk-forward backtesting — detect overfitting via train/test splits.
+    Walk-forward backtesting, detect overfitting via train/test splits.
 
     Splits full history into n_splits folds. Each fold:
       - Train (70%): in-sample strategy simulation
@@ -884,7 +900,7 @@ def walk_forward_backtest(
             # Both windows lost money: robustness = did the test lose LESS?
             # tr/te > 1 when the test loss is smaller than the train loss.
             # (The old te/tr rewarded losing MORE out-of-sample: train -1%,
-            # test -2% scored a capped 2.0 — "maximally robust".)
+            # test -2% scored a capped 2.0, "maximally robust".)
             fold_rob = round(max(min(tr / te, 2.0), 0.0), 2)
         elif tr < 0:
             fold_rob = 0.0
@@ -926,13 +942,13 @@ def walk_forward_backtest(
                                risk_free_rate=risk_free_rate, periods_per_year=periods_per_year)
 
     if avg_robust >= 0.8:
-        verdict = "ROBUST — strategy performs consistently in-sample and out-of-sample"
+        verdict = "ROBUST, strategy performs consistently in-sample and out-of-sample"
     elif avg_robust >= 0.5:
-        verdict = "MODERATE — some degradation out-of-sample, use with caution"
+        verdict = "MODERATE, some degradation out-of-sample, use with caution"
     elif avg_robust >= 0.2:
-        verdict = "WEAK — significant out-of-sample degradation, likely overfitted"
+        verdict = "WEAK, significant out-of-sample degradation, likely overfitted"
     else:
-        verdict = "OVERFITTED — strategy fails out-of-sample, do not trade live"
+        verdict = "OVERFITTED, strategy fails out-of-sample, do not trade live"
 
     return {
         "symbol":                  symbol.upper(),

@@ -44,8 +44,7 @@ def _round_floats(value: Any) -> Any:
 
     The fix is at float32's real limit: a 24-bit mantissa carries ~7.2 decimal
     digits, so everything beyond 6 significant digits is noise, whatever the
-    magnitude. Rounding to a fixed number of *decimal places* would not work —
-    2 places would damage option greeks (delta 0.0028 -> 0.0) and 4 would leave
+    magnitude. Rounding to a fixed number of *decimal places* would not work, 2 places would damage option greeks (delta 0.0028 -> 0.0) and 4 would leave
     the index level above as 7568.9199.
     """
     if isinstance(value, dict):

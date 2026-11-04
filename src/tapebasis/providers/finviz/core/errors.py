@@ -53,7 +53,7 @@ def make_error(code: Union[ErrorCode, str], message: str, **extra: Any) -> dict[
     Args:
         code: An :class:`ErrorCode` value or its raw string form.
         message: Human-readable description suitable for showing to a user.
-        **extra: Additional structured fields — e.g. ``retryable=True``,
+        **extra: Additional structured fields, e.g. ``retryable=True``,
             ``ticker="VCIG"``, ``status=429``.
 
     Returns:

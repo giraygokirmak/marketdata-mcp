@@ -3,7 +3,7 @@
 Every user-supplied string that ends up in a finviz.com URL is validated here
 before it is interpolated. Finviz reflects query parameters straight back into
 the HTML/JSON it renders, so unvalidated input is both a correctness and an
-injection problem — the allow-lists below are deliberately narrow.
+injection problem; the allow-lists below are deliberately narrow.
 """
 from __future__ import annotations
 

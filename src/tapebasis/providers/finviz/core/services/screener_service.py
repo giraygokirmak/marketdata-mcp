@@ -1,11 +1,11 @@
 """
-Screener service — ``/screener/stocks`` server-rendered island.
+Screener service, ``/screener/stocks`` server-rendered island.
 
 Finviz's screener was rebuilt as a React island: the HTML document ships a
 ``<script type="application/json" data-ssr-props="ssr-island-1">`` payload with
 the *entire* result page already resolved server-side. No XHR is needed, which
 is why this server reads the island instead of driving an internal API (there is
-no ``/api/screener`` route — the front end only calls
+no ``/api/screener`` route; the front end only calls
 ``/api/screener-chart-settings/*`` and ``/api/screener-filters``).
 
 Island shape::
@@ -137,7 +137,7 @@ async def screen(
     if not rows:
         raise FinvizServiceError(
             ErrorCode.NO_DATA,
-            "Screener returned zero rows — the filter combination matches nothing"
+            "Screener returned zero rows: the filter combination matches nothing"
             if filter_expr
             else "Screener returned zero rows",
             filters=filter_expr or None,

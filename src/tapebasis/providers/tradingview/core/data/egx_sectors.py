@@ -2,8 +2,7 @@
 
 Symbols validated against the live TradingView egypt-market listing on
 2026-08-26; 12 delisted/suspended symbols were pruned. New listings are
-NOT auto-assigned to sectors (sector membership needs manual research) —
-the full live universe lives in coinlist/egx.txt.
+NOT auto-assigned to sectors (sector membership needs manual research); the full live universe lives in coinlist/egx.txt.
 """
 from __future__ import annotations
 from typing import Any, Dict, List, Set

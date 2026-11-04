@@ -1,5 +1,5 @@
 """
-Stock Screener Service — share-type (common/preferred) stock screening and
+Stock Screener Service, share-type (common/preferred) stock screening and
 direct multi-symbol price lookups via tradingview_screener.
 
 The discriminator mirrors TradingView's own symbol-search filter and was
@@ -10,8 +10,7 @@ row in the UI corresponds to ``col('type') == 'stock'`` plus
 market 'america' returned 10,974 common / 676 preferred rows; 'korea' 2,637
 common (KRX, prices in KRW).
 
-IMPORTANT: do NOT add an ``is_primary`` filter to the preferred query —
-preferred shares are almost never the primary listing, so the scan silently
+IMPORTANT: do NOT add an ``is_primary`` filter to the preferred query, preferred shares are almost never the primary listing, so the scan silently
 returns 0 rows (america preferred: 676 without the filter, 0 with it). See
 also futures_service._futures_query() for why bumping tradingview-screener
 past 3.0.0 would inject exactly that kind of preset by default.
@@ -28,7 +27,7 @@ except ImportError:
 
 STOCK_TYPES = ("common", "preferred")
 
-# Not exhaustive — any market name tradingview_screener accepts works. This
+# Not exhaustive, any market name tradingview_screener accepts works. This
 # list only feeds error messages so a caller who typos a country sees
 # known-good options instead of a bare upstream error.
 EXAMPLE_MARKETS = (
@@ -51,8 +50,7 @@ MAX_PRICE_TICKERS = 2000
 
 # sort_by -> scanner column. Every entry must also be in _SCREEN_COLUMNS.
 # Field-tested motivation: without a server-side sort, "top dividend payers"
-# can only be computed inside the market-cap-ranked window the caller pulled —
-# the real leaders in the long tail stay invisible.
+# can only be computed inside the market-cap-ranked window the caller pulled, # the real leaders in the long tail stay invisible.
 SORT_FIELDS = {
     "market_cap": "market_cap_basic",
     "dividend_yield": "dividends_yield_current",
@@ -64,7 +62,7 @@ SORT_FIELDS = {
 def _clean(value: Any) -> Any:
     """NaN -> None so rows serialize to JSON cleanly."""
     try:
-        if value != value:  # noqa: PLR0124 — NaN is the only x != x
+        if value != value:  # noqa: PLR0124, NaN is the only x != x
             return None
     except Exception:
         pass
@@ -87,18 +85,18 @@ def screen_stocks(
     """Screen stocks of one share type for a country market.
 
     Returns an envelope: total_matches is the market-wide count, rows are the
-    top-N by sort_by (market_cap | dividend_yield | change | price — always
+    top-N by sort_by (market_cap | dividend_yield | change | price, always
     descending, server-side, so the ranking covers the WHOLE market, not just
     the window the caller happened to pull).
 
     exclude_otc (default True): TradingView's 'america' market means "trades
-    on a US venue", not "is a US company" — without this filter ~1/3 of the
+    on a US venue", not "is a US company", without this filter ~1/3 of the
     top-100 is OTC foreign listings (Tencent, Roche, Nestlé...). Field-tested
     on day one: a user asking for "the biggest 100 US stocks" got 29 OTC rows.
     Pass exclude_otc=False to include them.
 
     compact (default False): True trims rows to ticker/symbol/price/currency/
-    change_percent — for price-feed consumers pulling 1,000+ rows where the
+    change_percent, for price-feed consumers pulling 1,000+ rows where the
     full envelope is mostly dead weight.
 
     Deliberately NOT deduplicated across share classes (GOOG/GOOGL, BRK.A/
@@ -107,11 +105,11 @@ def screen_stocks(
     Known limitation in the same family: exchange-specific quotation lines
     (e.g. ASX deferred-settlement tickers like MTSCD next to MTS) carry
     type=stock + typespecs=[common] and are indistinguishable in scanner
-    fields — filtering them by ticker-suffix heuristics would risk false
+    fields, filtering them by ticker-suffix heuristics would risk false
     positives on real symbols, so they are passed through as-is.
 
     change_percent can be null (fresh listings before their first full
-    session, e.g. SKHY on IPO day). Deliberately NOT defaulted to 0 — "no
+    session, e.g. SKHY on IPO day). Deliberately NOT defaulted to 0, "no
     change data" and "0% change" are different facts; null-check downstream.
     """
     _require_available()
@@ -140,7 +138,7 @@ def screen_stocks(
         .limit(limit)
     )
     # get_scanner_data forwards kwargs to requests.post, which has no default
-    # timeout — a stalled endpoint would hang the worker thread forever.
+    # timeout, a stalled endpoint would hang the worker thread forever.
     total, df = query.get_scanner_data(timeout=20)
     rows = [
         {
@@ -177,14 +175,14 @@ def fetch_stock_prices(tickers: str) -> dict[str, Any]:
     """Current price + daily % change for specific symbols.
 
     ``tickers`` is a comma-separated list in EXCHANGE:SYMBOL form, e.g.
-    ``"NASDAQ:NVDA, KRX:005930"`` — the exchange prefix is required because
+    ``"NASDAQ:NVDA, KRX:005930"``, the exchange prefix is required because
     the scanner's direct-ticker lookup is exchange-scoped.
     """
     _require_available()
     parsed = [t.strip().upper() for t in (tickers or "").split(",") if t.strip()]
     if not parsed:
         raise ValueError(
-            "tickers required — comma-separated EXCHANGE:SYMBOL, "
+            "tickers required, comma-separated EXCHANGE:SYMBOL, "
             "e.g. 'NASDAQ:NVDA, KRX:005930'"
         )
     if len(parsed) > MAX_PRICE_TICKERS:
@@ -223,7 +221,7 @@ def fetch_stock_prices(tickers: str) -> dict[str, Any]:
         "requested": len(parsed),
         "returned": len(found),
         "rows": list(found.values()),
-        # Surface misses explicitly — a silent drop reads as "price service
+        # Surface misses explicitly, a silent drop reads as "price service
         # is broken" to the caller, a named miss reads as "typo in my list".
         "not_found": missing,
     }

@@ -13,9 +13,9 @@ Works with any symbol Yahoo Finance supports:
   Turkish: THYAO.IS, SASA.IS
 
 Two parallel APIs:
-  ``get_price(symbol)``         — sync, used by internal callers that aren't
+  ``get_price(symbol)``        : sync, used by internal callers that aren't
                                   running inside an event loop
-  ``get_price_async(symbol)``   — async, used by FastMCP tool handlers so
+  ``get_price_async(symbol)``  : async, used by FastMCP tool handlers so
                                   multiple parallel quote requests don't
                                   block the event loop
 """
@@ -37,7 +37,7 @@ _BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
 
 
 # 5 days (not 2): when the newest session has no trades yet its close is None,
-# and a 2-day window then leaves only ONE usable close — too few to derive a
+# and a 2-day window then leaves only ONE usable close, too few to derive a
 # previous close, which used to fall back to chartPreviousClose (the same bar)
 # and report a 0% or nonsense move.
 _QUOTE_RANGE = "5d"
@@ -64,7 +64,7 @@ def _quote_is_stale(chart_result: dict) -> bool:
     """True when meta's quote block is older than the candle data.
 
     Yahoo serves a frozen quote block for some venues while the chart series
-    stays current — observed on every EGX (.CA) symbol, where
+    stays current, observed on every EGX (.CA) symbol, where
     ``regularMarketTime`` sits at 2024-07-23 and ``regularMarketPrice`` is the
     price from that day. Comparing that against a current close produced
     fictional moves (CCAP.CA: 2.2 vs a real 5.75 close, reported as -61%).
@@ -100,14 +100,14 @@ def _get_previous_close(chart_result: dict) -> Optional[float]:
 
 
 def _format_quote(symbol: str, chart_result: dict) -> dict:
-    """Pure formatter — no I/O. Shared by sync and async paths."""
+    """Pure formatter, no I/O. Shared by sync and async paths."""
     meta = chart_result.get("meta", {})
     closes = _valid_closes(chart_result)
     stale = _quote_is_stale(chart_result)
 
     if stale and closes:
         # Fall back to the candle series, which stays current. Candle closes
-        # arrive as float32 (6.900000095367432) — round so callers and the
+        # arrive as float32 (6.900000095367432), round so callers and the
         # wire format show a real price.
         price = round(closes[-1], 4)
         prev_close = round(closes[-2], 4) if len(closes) >= 2 else None
@@ -119,7 +119,7 @@ def _format_quote(symbol: str, chart_result: dict) -> dict:
             prev_close = round(prev_close, 4)
         price_source = "quote"
 
-    # A missing previous close stays None — substituting the current price
+    # A missing previous close stays None, substituting the current price
     # silently reported change=0.0, indistinguishable from a genuinely flat
     # session.
     chg = round(price - prev_close, 4) if (price and prev_close) else None
@@ -249,7 +249,7 @@ async def get_price_async(symbol: str) -> dict:
 
 
 async def get_market_snapshot_async() -> dict:
-    """Async snapshot — fans all 14 symbols out in parallel via one client."""
+    """Async snapshot, fans all 14 symbols out in parallel via one client."""
     import asyncio
 
     groups = {

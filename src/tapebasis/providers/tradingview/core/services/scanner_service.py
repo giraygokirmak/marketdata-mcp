@@ -1,5 +1,5 @@
 """
-Scanner Service — volume breakout and technical pattern scanning logic.
+Scanner Service, volume breakout and technical pattern scanning logic.
 
 All functions take validated parameters and return plain dicts / lists.
 They have zero dependency on the MCP layer and are independently testable.
@@ -244,11 +244,11 @@ def volume_confirmation_analyze(
     Returns:
         Dict with price data, volume analysis, technical indicators, and signals.
     """
-    # Resolve to a fully-qualified EXCHANGE:TICKER via the canonical helper — the
+    # Resolve to a fully-qualified EXCHANGE:TICKER via the canonical helper, the
     # exact path analyze_coin() (coin_analysis) uses. The old hand-rolled
     # normalisation only prefixed the venue for STOCK exchanges, so every crypto
     # symbol reached tradingview_ta as a bare ticker (e.g. "BTCUSDT") and was
-    # rejected with "Symbol should be a list of exchange and ticker" — ~99% of
+    # rejected with "Symbol should be a list of exchange and ticker", ~99% of
     # volume_confirmation_analysis calls failed. This also fixes forex/commodity
     # symbols (XAUUSD -> TVC:GOLD) and picks the screener from the resolved venue.
     full_symbol = normalize_tradingview_symbol(symbol, exchange)
@@ -290,7 +290,7 @@ def volume_confirmation_analyze(
             return make_error(
                 ErrorCode.NO_DATA,
                 f"No indicator data for {full_symbol}. The venue returned a row "
-                "without indicators — retrying the same request will not help; "
+                "without indicators, retrying the same request will not help; "
                 "try another timeframe or exchange.",
                 retryable=False,
                 symbol=symbol, exchange=exchange, timeframe=timeframe,

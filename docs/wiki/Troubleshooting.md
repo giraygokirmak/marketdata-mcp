@@ -4,34 +4,39 @@ Symptom → cause → fix.
 
 ---
 
-## `data_provider` is `TRADINGVIEW` or `FINVIZ`, not `BOTH`
+## `data_provider` is `TRADINGVIEW`, `FINVIZ` or `YAHOO`, not `ALL`
 
-**Cause:** one provider failed or timed out for this call.
+**Cause:** at least one provider failed or timed out for this call, so coverage is incomplete.
 
-**Diagnose:** read `errors` in the response — it names the failing provider and a code.
+**Diagnose:** read `errors` in the response. It names the failing provider and a code.
 
 | Code | Meaning | Fix |
 | --- | --- | --- |
 | `UPSTREAM_TIMEOUT` | Provider too slow | Retry; raise `FINVIZ_TIMEOUT` if persistent |
-| `UPSTREAM_RATE_LIMIT` | Too many requests | Raise `TRADINGVIEW_MCP_MIN_INTERVAL_S` |
+| `UPSTREAM_RATE_LIMIT` | Too many requests | Raise `TAPEBASIS_<PROVIDER>_MIN_INTERVAL`; check `rate_limits` |
 | `UPSTREAM_BLOCKED` | WAF rejected the request | Usually transient; check `tapebasis_health` |
-| `NO_DATA` | Provider answered, had nothing for this symbol | Check the ticker spelling |
+| `NO_DATA` | Provider answered, had nothing for this symbol | Check `resolutions`, then the ticker spelling |
 | `PARSE_ERROR` | Markup/JSON shape changed | See [health drift](#tapebasis_health-reports-drift) |
-| `NOT_CONFIGURED` | Feature needs a token | Add `MARKETAUX_API_TOKEN`, or ignore — data is still served |
+| `NOT_CONFIGURED` | Feature needs a token | Add `MARKETAUX_API_TOKEN`, or ignore: the data is still served |
 
 A single-source response is **not** a failure. The data is served and labelled; the notice says it is
-not cross-verified.
+not corroborated.
+
+**Also check `providers_answered`.** `ALL` means every provider that was asked answered, which can be
+two out of three. If a provider is missing from that list and there is no matching `errors` entry,
+look for `NOT_ATTEMPTED`: the provider does not carry the instrument at all, and `resolutions` says
+why.
 
 ---
 
 ## `data_provider` is `NONE`
 
-**Cause:** neither provider answered.
+**Cause:** no provider answered.
 
-1. Check `errors` — usually two entries.
+1. Check `errors`: usually two or three entries.
 2. Run `tapebasis_health(refresh=True)`.
 3. Most common root cause is a lost network path or DNS, not the code.
-4. For an unknown symbol: `NO_DATA` from both is correct behaviour, not an outage.
+4. For an unknown symbol: `NO_DATA` from every provider is correct behaviour, not an outage.
 
 Never present a value when `data_provider` is `NONE`.
 
@@ -39,10 +44,10 @@ Never present a value when `data_provider` is `NONE`.
 
 ## `tapebasis_health` reports `DRIFT`
 
-**Cause:** an upstream changed shape — a renamed JSON field, a moved route, a missing HTML marker.
+**Cause:** an upstream changed shape: a renamed JSON field, a moved route, a missing HTML marker.
 The endpoint still answers 200, which is exactly why this is detected separately.
 
-1. Read the probe's `message` — it names the field or marker that vanished.
+1. Read the probe's `message`: it names the field or marker that vanished.
 2. Fetch the endpoint yourself and compare against what the parser expects.
 3. If upstream genuinely changed: update the parser or shaper, then reset the baseline.
 4. If the change looks temporary/interstitial: wait one interval, re-check with `refresh=True`.
@@ -60,38 +65,43 @@ rm ~/.tapebasis/health_state.json     # only after fixing the parser
 
 **Cause:** normally the print times differ, or a field is derived differently.
 
-1. Read `comparisons[].diff_pct` — how far apart, in percent.
-2. Compare against `tolerance_pct` for that field.
-3. Within tolerance → `match: true`, no warning. Normal.
-4. Beyond tolerance → `match: false`, named in `notice` and `warnings`.
+1. Read `freshness.decision` first. `newest` means one provider printed later and its value is the
+   one shown; that is not a conflict.
+2. Read `comparisons[].diff_pct`: how far apart, in percent.
+3. Compare against `tolerance_pct` for that field.
+4. Within tolerance → `match: true`, no warning. Normal.
+5. Beyond tolerance → `match: false`, named in `notice` and `warnings`.
+6. `match: null` with `not_comparable: true` → the readings describe different sessions, so they were
+   not judged at all.
 
-**Check `sources` before assuming a bug.** The `TRADINGVIEW` leg's price comes from Yahoo Finance, so
-a genuine divergence is a Yahoo-vs-Finviz difference, not TradingView-vs-Finviz. A closed market
-should agree to the cent; an intraday read legitimately will not.
+**Check `sources` before assuming a bug.** Each label names the upstream that leg actually called:
+TradingView's scanner, finviz.com, and query1.finance.yahoo.com. A closed market should agree to the
+cent; an intraday read legitimately will not.
 
-If a mismatch is systematic on one field, the tolerance may be wrong — see
+If a mismatch is systematic on one field, the tolerance may be wrong. See
 [Development § Choosing a tolerance](Development#choosing-a-tolerance).
 
 ---
 
-## `change_percent` is consistently slightly off between providers
+## `change_percent`, `previous_close` or `volume` is `not_comparable`
 
-**Expected.** Not a bug. Each provider computes the day change from its own reference close, so a
-small gap is a formula difference. `change %` therefore carries a 2 % tolerance (floor 0.05), and for
-indices it is reported from both but deliberately **not** compared.
+**Expected**, and not a defect. Those fields are measured against the previous close of the session
+the print belongs to. Finviz mid-session and Yahoo at the prior close answer two different questions,
+so the pair is excluded from the agreement decision with the hour gap recorded in
+`pairs[].not_comparable`.
 
-The underlying `previous_close` *is* compared tightly (0.5 %) — if that disagrees, it is a real
-conflict.
+The price itself is still compared, because a price stays comparable across minutes. If you need a
+like-for-like day change, compare providers whose `freshness` timestamps are within the hour.
 
 ---
 
-## `stock_quote` returns `peers` as `FINVIZ` inside a `BOTH` response
+## `stock_quote` returns `peers` as `FINVIZ` inside an `ALL` response
 
 **Expected.** `stock_quote` mixes sources: price and core metrics are compared across providers, but
 the fundamentals snapshot, company profile, peers and after-hours print exist only on Finviz.
 
-`fields` exists precisely for this. `data_provider: BOTH` means the *compared* fields were confirmed
-twice, not that every field was. Per-field truth is in `fields`.
+`fields` exists precisely for this. `data_provider: ALL` means every provider that was asked answered
+for this call, not that every field was covered three times. Per-field truth is in `fields`.
 
 ---
 
@@ -102,7 +112,7 @@ scoring is local, so the label is `FINVIZ`.
 
 If you expected the licensed path:
 
-1. Check `data.licensed_path_unavailable` — it carries the reason.
+1. Check `data.licensed_path_unavailable`: it carries the reason.
 2. Most common: no token, expired token, or the daily budget is spent.
 3. `MARKETAUX_DAILY_BUDGET` defaults to 90 under a 100/day plan.
 
@@ -112,7 +122,7 @@ To use the licensed path, set `MARKETAUX_API_TOKEN`. To accept local scoring, do
 
 ## `market_sentiment` returns `sentiment_score: null`
 
-**Cause:** there was nothing to score — Marketaux unavailable **and** Finviz headlines unavailable.
+**Cause:** there was nothing to score: Marketaux unavailable **and** Finviz headlines unavailable.
 
 Read `note` for both reasons. This is deliberate: `null` means "we could not look", `0.0` would mean
 "the news is balanced". They are never conflated, because a data gap must not read as a finding.
@@ -126,36 +136,49 @@ negation or long-range context, so some headlines will land wrong.
 
 Practical notes:
 
-- It is deterministic and cheap, not accurate in an absolute sense — a triage signal.
+- It is deterministic and cheap, not accurate in an absolute sense: a triage signal.
 - `top_posts` shows the highest-conviction headlines, so you can audit what drove the average.
 - `posts_analyzed` tells you the sample size; a score over 3 headlines is weak evidence.
 - It is not a trading signal, and the payload says so.
 
 If a specific domain word is scored wrong, adding it to the overlay in `sentiment.py` with an
-explicit valence is the fix. Use a **float** — VADER adds valences arithmetically and a string raises
+explicit valence is the fix. Use a **float**: VADER adds valences arithmetically and a string raises
 `TypeError`.
 
 ---
 
 ## `combined_analysis` has an empty `news` leg
 
-**Expected** without `MARKETAUX_API_TOKEN` — that leg is Marketaux-only. The sentiment leg still works
-(local scoring), and `data.news` says why it is empty. Price cross-check is unaffected.
+**Expected** without `MARKETAUX_API_TOKEN`: that leg is Marketaux-only. The sentiment leg still works
+(local scoring), and `data.news` says why it is empty. The price cross-check is unaffected.
 
 ---
 
 ## A tool hangs for ~25 s then returns single-source
 
-**Cause:** one provider hit its HTTP timeout and the other's data still went out. The fan-out waits
-for both, so latency is the slowest leg.
+**Cause:** one provider hit its HTTP timeout and the others' data still went out. The fan-out waits
+for every leg, so latency is the slowest one.
 
 Tuning: lower `FINVIZ_TIMEOUT` to fail faster, at the cost of losing slow-but-valid answers.
 
 ---
 
+## Responses suddenly degrade to one provider
+
+**Cause:** usually a rate-limit cooldown, not an outage.
+
+1. Call `tapebasis_health()` and read `rate_limits`. A positive `cooling_down_s` means that provider is
+   in its post-`429` pause right now, and a rising `block_streak` means it has been blocked repeatedly.
+2. Let it decay (5 s doubling to 120 s, with jitter). A fan-out over many tickers can trip it.
+3. If it recurs, raise `TAPEBASIS_YAHOO_MIN_INTERVAL` first: Yahoo is the most sensitive of the three.
+4. TradingView's websocket reports a block as `invalid symbol` / `resolve error`. Those are treated as
+   rate limiting, so a burst does not permanently poison the symbol-resolution cache.
+
+---
+
 ## `/health` says healthy but tool calls fail
 
-`/health` reads the **cached** verdict and makes no upstream call — by design, so a Finviz outage does
+`/health` reads the **cached** verdict and makes no upstream call, by design, so a Finviz outage does
 not mark the container unhealthy. A stale cache can therefore look green while upstreams are broken.
 
 ```bash
@@ -172,7 +195,7 @@ docker compose logs --tail=100 tapebasis
 ```
 
 1. `start_period` is 15 s; a slow first probe can trip an early check. Wait, then re-check.
-2. Confirm `HOST=0.0.0.0` inside the container — loopback makes the port mapping useless.
+2. Confirm `HOST=0.0.0.0` inside the container: loopback makes the port mapping useless.
 3. Confirm the health path is `/health`, not `/mcp`.
 
 ---
@@ -193,23 +216,30 @@ MCP clients do not inherit your shell `PATH`; absolute paths avoid the whole cla
 
 ## Symbol returns `NO_DATA` but I know it trades
 
-Provider symbol conventions differ:
+Read `resolutions` first. It shows exactly which ticker each provider was asked for and how it was
+derived (`explicit`, `alias`, `search`, `none`).
 
 | Case | Handling |
 | --- | --- |
 | `BRK.B` ↔ `BRK-B` | Normalised automatically |
 | `^GSPC` ↔ `SPX` ↔ `SP:SPX` | Aliased to `SPX` |
-| `RUT` vs `IWM` | Index vs its ETF — **different instruments**, never aliased |
-| Crypto (`BTC-USD`), FX (`EURUSD=X`) | TradingView side only; Finviz has no coverage |
-| Non-US (`.IS`, `.CA`) | TradingView only; Finviz may redirect or return nothing |
+| `RUT` vs `IWM` | Index vs its ETF: **different instruments**, never aliased |
+| `XAUUSD` (spot gold) | TradingView `OANDA:XAUUSD` only. Yahoo has no spot pair (`XAUUSD=X` is a 404) and Finviz does not carry it |
+| `BTCUSD` | TradingView `BITSTAMP:BTCUSD`, Yahoo `BTC-USD`; Finviz has no crypto |
+| `EURUSD` | TradingView `FX:EURUSD`, Yahoo `EURUSD=X`; Finviz has no FX |
+| `SPX` / `DJI` | Finviz has no per-ticker index page (`/stock?t=SPX` is a 404, and `COMP` there is Compass Inc). Use `market_indices` |
+| Non-US (`.IS`, `.CA`) | TradingView only, unless Yahoo or Finviz happens to list it |
+
+A resolution of `none` is not an outage: it means the provider genuinely has no such instrument, and
+its `note` says so. That is why a `NONE` resolution never appears in `errors`.
 
 If Finviz silently resolves a delisted/renamed ticker, the response carries `ticker_warning` with
-both the requested and resolved symbol — never assume they are the same.
+both the requested and resolved symbol. Never assume they are the same.
 
 ---
 
 ## Related
 
-- [Health Monitor](Health-Monitor) — drift detection in depth
-- [Response Contract](Response-Contract) — reading `errors`/`warnings`
-- [Configuration](Configuration) — every tunable
+- [Health Monitor](Health-Monitor): drift detection in depth
+- [Response Contract](Response-Contract): reading `errors`/`warnings`
+- [Configuration](Configuration): every tunable

@@ -1,17 +1,17 @@
 """
-Ownership services — insider trades, insider activity chart, institutional holders.
+Ownership services, insider trades, insider activity chart, institutional holders.
 
 Three distinct data sources share this module because they all answer "who owns
 this, and what did they do":
 
-1. ``insidertrading`` table on ``/stock?t={t}``      — the Form-4 row list.
-2. ``insider-init-data-0`` JSON island               — 12 monthly buckets of
+1. ``insidertrading`` table on ``/stock?t={t}``     : the Form-4 row list.
+2. ``insider-init-data-0`` JSON island              : 12 monthly buckets of
    aggregated buy/sell value used to draw the mini bar chart. Note the table and
    the island disagree in practice (the table shows the Sep-30 buy as
    ``$313,225`` while the island's latest bucket can still be zero): they are
    refreshed on different schedules, so both are returned with their own
    provenance instead of being merged.
-3. ``institutional-ownership-init-data-0`` JSON island — manager + fund
+3. ``institutional-ownership-init-data-0`` JSON island, manager + fund
    positions with ``percOwnership`` expressed as a *fraction* (0.277 = 27.7%).
 
 Elite gating: the full institutional-ownership breakdown (13F history, holder
@@ -120,7 +120,7 @@ async def get_insider_trading(ticker: str, limit: int = 40) -> dict[str, Any]:
 async def get_institutional_ownership(ticker: str, limit: int = 20) -> dict[str, Any]:
     """Manager and fund positions from the ``institutional-ownership`` island.
 
-    ``percOwnership`` arrives as a fraction — it is converted to a percentage
+    ``percOwnership`` arrives as a fraction; it is converted to a percentage
     here and both forms are returned so nothing is lost to rounding surprises.
 
     Raises:

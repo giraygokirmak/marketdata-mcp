@@ -1,21 +1,25 @@
-"""tapebasis — one MCP server, two market-data providers, cross-verified.
+"""tapebasis: one MCP server, three market-data providers, cross-verified.
 
-The server fans every overlapping request out to both upstream providers
-(TradingView and Finviz), compares the answers, and labels each response with
-exactly one :data:`data_provider` value:
+The server fans every overlapping request out to every upstream provider that
+can serve it (TradingView, Finviz and Yahoo Finance), compares the answers, and
+labels each response with exactly one :data:`data_provider` value:
 
-``BOTH``
-    Both providers answered and their values agree (within tolerance). This is
-    the only state in which data is described as *verified*.
-``TRADINGVIEW``
-    Only TradingView produced data. Served, but explicitly unverified.
-``FINVIZ``
-    Only Finviz produced data. Served, but explicitly unverified.
+``ALL``
+    Every provider that was asked answered. This is a statement about
+    *coverage*, not about agreement: agreement is reported separately in
+    ``comparisons`` and summarised in ``notice``.
+``TRADINGVIEW`` / ``FINVIZ`` / ``YAHOO``
+    Only that provider produced data. Served, but explicitly single-source.
 ``NONE``
-    Neither provider produced data.
+    No provider produced data.
 
-See :mod:`tapebasis.reconcile` for the fan-out/comparison engine and
-:mod:`tapebasis.health` for the upstream schema-drift monitor.
+Each provider is fetched natively and independently: a leg that quietly proxied
+another provider would be worthless as a cross-check. Symbols are resolved per
+provider dynamically, and every provider call is paced by a shared rate limiter.
+
+See :mod:`tapebasis.reconcile` for the fan-out/comparison engine,
+:mod:`tapebasis.ratelimit` for pacing, and :mod:`tapebasis.health` for the
+upstream schema-drift monitor.
 """
 
 __version__ = "1.0.0"

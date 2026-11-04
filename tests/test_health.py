@@ -188,4 +188,39 @@ def test_warnings_are_scoped_to_the_provider():
     }
     assert monitor.warnings_for((FINVIZ,)) == []
     assert len(monitor.warnings_for((TRADINGVIEW,))) == 1
-    assert len(monitor.warnings_for(("BOTH",))) == 1
+    # ``ALL`` means "every provider this call touched", so it must surface both.
+    assert len(monitor.warnings_for(("ALL",))) == 1
+    assert len(monitor.warnings_for(("ALL", FINVIZ))) == 1
+
+
+def test_every_provider_has_its_own_probe():
+    """Yahoo used to be probed under TRADINGVIEW; that hid a whole outage."""
+    providers = {probe.provider for probe in health._probes()}
+    assert providers == {TRADINGVIEW, FINVIZ, health.YAHOO}
+
+
+def test_tradingview_probes_hit_tradingview_not_yahoo():
+    probes = [p for p in health._probes() if p.provider == TRADINGVIEW]
+    assert probes
+    assert all("finance.yahoo.com" not in p.url for p in probes)
+    hosts = {p.url.split("/")[2] for p in probes}
+    assert hosts == {"scanner.tradingview.com", "symbol-search.tradingview.com"}
+
+
+def test_yahoo_probes_hit_yahoo_only():
+    probes = [p for p in health._probes() if p.provider == health.YAHOO]
+    assert probes
+    assert all("finance.yahoo.com" in p.url for p in probes)
+
+
+def test_summary_includes_rate_limit_state():
+    monitor = HealthMonitor([])
+    monitor.results = {
+        "x": health.ProbeResult(
+            id="x", provider=TRADINGVIEW, description="", url="", status=STATUS_OK,
+        ),
+    }
+    summary = monitor.summary()
+    assert set(summary["providers"]) == {TRADINGVIEW, FINVIZ, health.YAHOO}
+    assert "rate_limits" in summary
+    assert summary["providers"]["YAHOO"] == "UNKNOWN"

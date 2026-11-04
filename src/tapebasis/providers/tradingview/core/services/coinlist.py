@@ -9,7 +9,7 @@ def load_symbols(exchange: str) -> List[str]:
     """Load symbols for a given exchange, with multiple fallback strategies.
 
     Cached per exchange (the coinlist files ship with the package and don't
-    change at runtime) — every scan used to re-read and re-parse the file.
+    change at runtime), every scan used to re-read and re-parse the file.
     Returns a fresh copy so callers can't poison the cache by mutating it.
     """
     return list(_load_symbols_cached(exchange))
@@ -44,7 +44,7 @@ def _load_symbols_cached(exchange: str) -> tuple:
     return ()
 
 
-# "all.txt" is an aggregate of every exchange — suggesting it as an exchange
+# "all.txt" is an aggregate of every exchange, suggesting it as an exchange
 # would send the model straight back into an invalid `exchange` value.
 _SUGGESTION_EXCLUDE = {"all"}
 
@@ -87,7 +87,7 @@ def _coinlist_index() -> Dict[str, FrozenSet[str]]:
 def exchanges_listing_symbol(symbol: str, max_results: int = 6) -> List[str]:
     """Exchanges (per the local coinlists) where *symbol* is listed.
 
-    Zero network cost — reads only the bundled coinlist files. Accepts bare
+    Zero network cost, reads only the bundled coinlist files. Accepts bare
     tickers ("HYPEUSDT") or prefixed ones ("BINANCE:HYPEUSDT"). Returns
     exchange names sorted alphabetically, capped at *max_results*; empty list
     when the ticker appears in no local list (likely a typo or an unsupported

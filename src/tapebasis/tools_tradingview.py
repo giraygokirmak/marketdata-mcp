@@ -1,25 +1,28 @@
-"""TradingView-only tools — served, and explicitly labelled single-source.
+"""TradingView-native tools, served, and explicitly labelled single-source.
 
 These capabilities exist only on the TradingView side of this stack: crypto
 screening, futures, EGX coverage, strategy backtests, news sentiment and the
-global FX/crypto snapshot. Finviz has no equivalent dataset, so the reconciler's
-``single()`` helper marks Finviz ``NOT_ATTEMPTED`` and the envelope reads
-``TRADINGVIEW`` with a notice that the data is not cross-verified.
+global FX/crypto snapshot. Finviz and Yahoo have no equivalent dataset, so the
+reconciler's ``single()`` helper marks them ``NOT_ATTEMPTED`` and the envelope
+reads ``TRADINGVIEW`` with a notice that the data is not cross-verified.
 
-One exception: ``combined_analysis`` adds a Finviz cross-check to the
-TradingView technical read, so that tool genuinely can reach ``BOTH``.
+Two exceptions genuinely combine providers:
+
+* ``market_snapshot`` asks TradingView's scanner and Yahoo's chart API
+  independently, so the broad FX/crypto/index/ETF read is multi-source.
+* ``combined_analysis`` adds Finviz and Yahoo price confirmation to the
+  TradingView technical read.
 """
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from . import fv_access, sentiment, tv_access
-from .health import FINVIZ, MONITOR, TRADINGVIEW
-from .providers_state import DataProvider, envelope, error_code
+from . import fv_access, sentiment, tv_access, yh_access
+from .health import FINVIZ, MONITOR, TRADINGVIEW, YAHOO
+from .providers_state import DataProvider, NotApplicable, ProviderError, envelope, error_code
 from .reconcile import ask, finalize, providers_in, single
 from .providers.tradingview.core.services import (
-    backtest_service,
     bitcoin_market_service,
     futures_service,
     marketaux_service,
@@ -27,7 +30,7 @@ from .providers.tradingview.core.services import (
     scanner_service,
     screener_service,
 )
-from .symbols import strip_exchange, to_finviz
+from .symbols import resolve_tradingview, strip_exchange, to_finviz
 
 _OFFLOAD = asyncio.to_thread
 
@@ -35,6 +38,13 @@ _OFFLOAD = asyncio.to_thread
 async def _run(fn, /, *args, **kwargs):
     """Run a blocking provider function in a worker thread (keeps the loop free)."""
     return await _OFFLOAD(fn, *args, **kwargs)
+
+
+async def _yahoo_resolution(symbol: str):
+    """Resolve a user symbol to Yahoo's spelling, for tools that need its feed."""
+    from .symbols import resolve
+
+    return await resolve(symbol, YAHOO)
 
 
 def _single_response(
@@ -354,13 +364,16 @@ async def stock_backtest(
     include_trade_log: bool = False,
     include_equity_curve: bool = False,
 ) -> dict[str, Any]:
-    """Backtest a strategy on a symbol (TradingView-only, single-source).
+    """Backtest a strategy on a symbol, using each provider's own history.
 
-    Finviz has no OHLCV history endpoint, so this cannot be cross-verified. The
-    response is labelled ``TRADINGVIEW`` and the notice says so.
+    The history is fetched from TradingView's chart feed and from Yahoo's chart
+    API independently, and the strategy is run on each. The two results are
+    compared metric by metric, if the OHLCV bars differ materially, the
+    backtest is only as trustworthy as the feed it came from, and the response
+    says which one produced the numbers shown.
 
     Args:
-        symbol: Ticker or coin.
+        symbol: Ticker or coin (any instrument either provider quotes).
         strategy: One of ``rsi``, ``bollinger``, ``macd``, ``ema_cross``,
             ``supertrend``, ``donchian``, ``rsi_pullback``, ``keltner_breakout``,
             ``triple_ema``.
@@ -371,25 +384,106 @@ async def stock_backtest(
         include_equity_curve: Include the equity curve.
 
     Returns:
-        Envelope labelled ``TRADINGVIEW`` with performance metrics.
+        Envelope whose ``data_provider`` is ``ALL`` when both feeds answered,
+        ``TRADINGVIEW``/``YAHOO`` when only one did (single-source), or ``NONE``.
+        ``comparisons`` holds the metric-by-metric agreement.
     """
-    return await _offload_result(
-        backtest_service.run_backtest,
-        strip_exchange(symbol).upper(),
-        strategy,
-        period=period,
-        initial_capital=initial_capital,
-        interval=interval,
-        include_trade_log=include_trade_log,
-        include_equity_curve=include_equity_curve,
-        source="TradingView backtest engine (Yahoo OHLCV)",
+    from .providers.tradingview.core.services import backtest_service
+
+    tv_res = await resolve_tradingview(symbol)
+    yh_res = await _yahoo_resolution(symbol)
+    ticker = strip_exchange(symbol).upper()
+
+    def _run(candles: list[dict], source: str) -> dict[str, Any]:
+        return backtest_service.run_backtest(
+            ticker,
+            strategy,
+            period=period,
+            initial_capital=initial_capital,
+            interval=interval,
+            include_trade_log=include_trade_log,
+            include_equity_curve=include_equity_curve,
+            candles=candles,
+            data_source=source,
+        )
+
+    async def tv_call() -> dict[str, Any]:
+        if not tv_res.found:
+            raise NotApplicable(TRADINGVIEW, tv_res.note or f"no TradingView symbol for {symbol}")
+        payload = await tv_access.history_candles(
+            tv_res.symbol, period=period, interval=interval
+        )
+        result = await asyncio.to_thread(_run, payload["candles"], "TradingView")
+        if result.get("error"):
+            raise ProviderError(TRADINGVIEW, str(result["error"]))
+        return result
+
+    async def yh_call() -> dict[str, Any]:
+        if not yh_res.found:
+            raise NotApplicable(YAHOO, yh_res.note or f"no Yahoo symbol for {symbol}")
+        payload = await yh_access.history_candles(
+            yh_res.symbol, period=period, interval=interval
+        )
+        result = await asyncio.to_thread(_run, payload["candles"], "Yahoo Finance")
+        if result.get("error"):
+            raise ProviderError(YAHOO, str(result["error"]))
+        return result
+
+    pair = await ask(tv_call, None, yh_call)
+
+    from .reconcile import compare_values
+
+    specs = (
+        ("total_return_pct", 1.0),
+        ("win_rate_pct", 2.0),
+        ("total_trades", 0.0),
+        ("max_drawdown_pct", 2.0),
+        ("sharpe_ratio", 5.0),
+        ("buy_and_hold_return_pct", 1.0),
+    )
+    tv_data = pair.tv.payload or {}
+    yh_data = pair.yh.payload or {}
+    comparisons = []
+    for field, tolerance in specs:
+        row = compare_values(
+            {TRADINGVIEW: tv_data.get(field), YAHOO: yh_data.get(field)},
+            tolerance_pct=tolerance,
+            absolute_floor=0.05,
+        )
+        row["field"] = field
+        comparisons.append(row)
+
+    answered = pair.answered
+    chosen = answered[0] if answered else None
+    data = tv_data or yh_data
+    if data:
+        data = dict(data)
+        data["providers_answered"] = answered
+
+    return finalize(
+        pair,
+        specs=(),
+        sources={
+            TRADINGVIEW: "TradingView chart websocket OHLCV",
+            YAHOO: "query1.finance.yahoo.com/v8/finance/chart OHLCV",
+        },
+        extra={
+            "backtest": data,
+            "metric_comparison": comparisons,
+            "chosen_backtest": chosen,
+        },
+        data=data,
+        health_warn=MONITOR.warnings_for(providers_in(pair) or (TRADINGVIEW, YAHOO)),
+        degraded=any(
+            issue["provider"] in providers_in(pair) for issue in MONITOR.issues()
+        ),
     )
 
 
 async def stock_backtest_compare(
     symbol: str, period: str = "1y", initial_capital: float = 10000.0
 ) -> dict[str, Any]:
-    """Compare every strategy on one symbol (TradingView-only).
+    """Compare every strategy on one symbol, on each provider's history.
 
     Args:
         symbol: Ticker.
@@ -397,14 +491,78 @@ async def stock_backtest_compare(
         initial_capital: Starting cash.
 
     Returns:
-        Envelope labelled ``TRADINGVIEW`` with the strategy leaderboard.
+        Envelope with the strategy leaderboard per provider and the winning
+        strategy they agree on (or a stated disagreement).
     """
-    return await _offload_result(
-        backtest_service.compare_strategies,
-        strip_exchange(symbol).upper(),
-        period=period,
-        initial_capital=initial_capital,
-        source="TradingView backtest engine (Yahoo OHLCV)",
+    from .providers.tradingview.core.services import backtest_service
+
+    tv_res = await resolve_tradingview(symbol)
+    yh_res = await _yahoo_resolution(symbol)
+    ticker = strip_exchange(symbol).upper()
+
+    async def tv_call() -> dict[str, Any]:
+        if not tv_res.found:
+            raise NotApplicable(TRADINGVIEW, tv_res.note or f"no TradingView symbol for {symbol}")
+        payload = await tv_access.history_candles(tv_res.symbol, period=period)
+        result = await asyncio.to_thread(
+            backtest_service.compare_strategies,
+            ticker,
+            period=period,
+            initial_capital=initial_capital,
+            candles=payload["candles"],
+            data_source="TradingView",
+        )
+        if result.get("error"):
+            raise ProviderError(TRADINGVIEW, str(result["error"]))
+        return result
+
+    async def yh_call() -> dict[str, Any]:
+        if not yh_res.found:
+            raise NotApplicable(YAHOO, yh_res.note or f"no Yahoo symbol for {symbol}")
+        payload = await yh_access.history_candles(yh_res.symbol, period=period)
+        result = await asyncio.to_thread(
+            backtest_service.compare_strategies,
+            ticker,
+            period=period,
+            initial_capital=initial_capital,
+            candles=payload["candles"],
+            data_source="Yahoo Finance",
+        )
+        if result.get("error"):
+            raise ProviderError(YAHOO, str(result["error"]))
+        return result
+
+    pair = await ask(tv_call, None, yh_call)
+    tv_data = pair.tv.payload or {}
+    yh_data = pair.yh.payload or {}
+    data = tv_data or yh_data
+    if data:
+        data = dict(data)
+        data["tradingview"] = tv_data
+        data["yahoo"] = yh_data
+        data["winner_comparison"] = {
+            "tradingview": tv_data.get("winner"),
+            "yahoo": yh_data.get("winner"),
+            "agree": (
+                None
+                if not (tv_data.get("winner") and yh_data.get("winner"))
+                else tv_data.get("winner") == yh_data.get("winner")
+            ),
+        }
+
+    return finalize(
+        pair,
+        specs=(),
+        sources={
+            TRADINGVIEW: "TradingView chart websocket OHLCV",
+            YAHOO: "query1.finance.yahoo.com/v8/finance/chart OHLCV",
+        },
+        extra={"backtest_compare": data},
+        data=data,
+        health_warn=MONITOR.warnings_for(providers_in(pair) or (TRADINGVIEW, YAHOO)),
+        degraded=any(
+            issue["provider"] in providers_in(pair) for issue in MONITOR.issues()
+        ),
     )
 
 
@@ -412,19 +570,91 @@ async def stock_backtest_compare(
 
 
 async def market_snapshot() -> dict[str, Any]:
-    """Global FX, crypto, index and ETF snapshot (TradingView-only).
+    """Global FX, crypto, index and ETF snapshot from two independent providers.
 
-    Finviz covers only the four US indices, so the broad snapshot is
-    single-source. Use ``market_indices`` for a cross-verified index read.
+    TradingView's scanner and Yahoo's chart API are asked separately, so the
+    groups that both carry (indices, major crypto, FX, ETFs) are genuinely
+    cross-checked. Finviz has no equivalent breadth, so it is not asked.
 
     Returns:
-        Envelope labelled ``TRADINGVIEW`` grouped by asset class.
+        Envelope grouped by asset class, each group labelled with whether every
+        asked provider answered it.
     """
-    try:
-        data = await tv_access.market_snapshot()
-    except Exception as exc:  # noqa: BLE001
-        return _failed(exc)
-    return _single_response(data, source="Yahoo Finance snapshot (via TradingView provider)")
+    return await _snapshot_impl()
+
+
+async def _snapshot_impl() -> dict[str, Any]:
+    """Ask TradingView's scanner and Yahoo's chart API for the same broad groups."""
+    from .reconcile import compare_values
+
+    async def tv_call() -> dict[str, Any]:
+        return await tv_access.market_snapshot()
+
+    async def yh_call() -> dict[str, Any]:
+        return {"groups": await yh_access.market_snapshot()}
+
+    pair = await ask(tv_call, None, yh_call)
+    tv_groups = (pair.tv.payload or {}).get("groups") or {}
+    yh_groups = (pair.yh.payload or {}).get("groups") or {}
+
+    groups: dict[str, Any] = {}
+    agree_all = True
+    compared_any = False
+    for group in ("indices", "crypto", "fx", "etfs"):
+        tv_rows = {str(r.get("symbol") or "").upper(): r for r in tv_groups.get(group) or []}
+        yh_rows = {str(r.get("symbol") or "").upper(): r for r in yh_groups.get(group) or []}
+        rows = []
+        for symbol in sorted(set(tv_rows) | set(yh_rows)):
+            tv_row = tv_rows.get(symbol)
+            yh_row = yh_rows.get(symbol)
+            cmp_row = compare_values(
+                {
+                    TRADINGVIEW: (tv_row or {}).get("price"),
+                    YAHOO: (yh_row or {}).get("price"),
+                },
+                # VIX moves percent-level in seconds; the index-level 0.5 %
+                # tolerance would report a fast market as a data conflict.
+                tolerance_pct=3.0 if symbol == "^VIX" else 0.5,
+            )
+            if cmp_row["match"] is not None:
+                compared_any = True
+                if cmp_row["match"] is False:
+                    agree_all = False
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "price": (tv_row or yh_row or {}).get("price"),
+                    "change_pct": (tv_row or yh_row or {}).get("change_pct"),
+                    "data_provider": (
+                        DataProvider.ALL.value
+                        if tv_row and yh_row
+                        else DataProvider.TRADINGVIEW.value
+                        if tv_row
+                        else DataProvider.YAHOO.value
+                    ),
+                    "tradingview_price": (tv_row or {}).get("price"),
+                    "yahoo_price": (yh_row or {}).get("price"),
+                    "agree": cmp_row["match"],
+                    "comparison": cmp_row,
+                }
+            )
+        groups[group] = rows
+
+    data = {"groups": groups, "all_groups_agree": agree_all if compared_any else None}
+    return finalize(
+        pair,
+        specs=(),
+        sources={
+            TRADINGVIEW: "scanner.tradingview.com (global snapshot)",
+            YAHOO: "query1.finance.yahoo.com/v8/finance/chart",
+        },
+        extra={"snapshot": data},
+        data=data,
+        health_warn=MONITOR.warnings_for(providers_in(pair) or (TRADINGVIEW, YAHOO)),
+        degraded=any(
+            issue["provider"] in providers_in(pair) for issue in MONITOR.issues()
+        ),
+    )
 
 
 async def bitcoin_market_pulse() -> dict[str, Any]:
@@ -444,7 +674,7 @@ async def market_sentiment(symbol: str, category: str = "all", limit: int = 20) 
 
     Prefers the licensed Marketaux entity sentiment when ``MARKETAUX_API_TOKEN``
     is set. Without a token it scores Finviz headlines locally (VADER with a
-    financial lexicon) — deterministic, offline and free. Either way the payload
+    financial lexicon), deterministic, offline and free. Either way the payload
     names the backend in ``provider``/``scoring`` and never fabricates a score
     when there is no material to score.
 
@@ -502,13 +732,13 @@ async def egx_market_overview(timeframe: str = "1D", limit: int = 10) -> dict[st
 
 
 async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: str = "1D") -> dict[str, Any]:
-    """Technical analysis, news and sentiment in one call, cross-checked on price.
+    """Technical analysis, news and sentiment in one call, price cross-checked.
 
-    Runs the TradingView technical read plus news sentiment, then pulls Finviz's
-    latest close to confirm the price the analysis was built on. This is the one
-    composite that can legitimately return ``BOTH``: the price leg is
-    dual-sourced, while the analysis and sentiment legs remain single-source and
-    are labelled per field.
+    Runs the TradingView technical read plus news sentiment, then asks Finviz and
+    Yahoo independently for the latest price to confirm the value the analysis
+    was built on. This composite can legitimately return ``ALL``: the price leg
+    is multi-source, while the analysis and sentiment legs remain single-source
+    and are labelled per field.
 
     Sentiment needs no API key: Marketaux is used when ``MARKETAUX_API_TOKEN`` is
     set, otherwise Finviz headlines are scored locally. The ``data.news`` leg
@@ -524,13 +754,11 @@ async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: st
         ``data.price_cross_check``.
     """
     ticker = strip_exchange(symbol).upper()
+    yh_res = await _yahoo_resolution(symbol)
 
     async def tv_call() -> dict[str, Any]:
-        analysis = await _run(
-            tv_access.technical_analysis_sync,
-            ticker,
-            exchange=exchange,
-            timeframe=timeframe,
+        analysis = await tv_access.technical_analysis(
+            ticker, exchange=exchange, timeframe=timeframe
         )
         sentiment_data = await _sentiment_payload(ticker, limit=20)
         news = await _run(
@@ -541,15 +769,22 @@ async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: st
     async def fv_call() -> dict[str, Any]:
         return await fv_access.snapshot(to_finviz(ticker))
 
-    pair = await ask(tv_call, fv_call)
+    async def yh_call() -> dict[str, Any]:
+        if not yh_res.found:
+            raise NotApplicable(YAHOO, yh_res.note or f"no Yahoo symbol for {symbol}")
+        return await yh_access.quote(yh_res.symbol)
 
-    from .reconcile import compare_numeric
+    pair = await ask(tv_call, fv_call, yh_call)
+
+    from .reconcile import compare_values
 
     tv_payload = pair.tv.payload or {}
     fv_payload = pair.fv.payload or {}
+    yh_payload = pair.yh.payload or {}
     analysis = tv_payload.get("analysis") or {}
     tv_price = (analysis.get("price_data") or {}).get("current_price")
     fv_price = (fv_payload.get("numeric") or {}).get("Price")
+    yh_price = yh_payload.get("price")
 
     sentiment_data = tv_payload.get("sentiment") or {}
     sentiment_source = (
@@ -562,13 +797,17 @@ async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: st
         "analysis": analysis,
         "sentiment": tv_payload.get("sentiment"),
         "news": tv_payload.get("news"),
-        "price_cross_check": compare_numeric(tv_price, fv_price, tolerance_pct=0.5),
+        "price_cross_check": compare_values(
+            {TRADINGVIEW: tv_price, FINVIZ: fv_price, YAHOO: yh_price},
+            tolerance_pct=0.5,
+        ),
     }
     return finalize(
         pair,
         sources={
             TRADINGVIEW: "TradingView technical analysis",
             FINVIZ: f"https://finviz.com/stock?t={to_finviz(ticker)}",
+            YAHOO: f"https://query1.finance.yahoo.com/v8/finance/chart/{yh_res.symbol}",
         },
         extra={"sentiment_source": sentiment_source},
         data=data,

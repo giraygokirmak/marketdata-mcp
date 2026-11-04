@@ -1,26 +1,662 @@
-"""Symbol normalisation and small parsing helpers shared by the tool layer.
+"""Dynamic symbol resolution across three providers.
 
-The two providers spell the same instrument differently:
+The three upstreams name the same instrument differently, and the differences
+are not mechanical:
 
-===========  =================  ===============
-Instrument   TradingView/Yahoo  Finviz
-===========  =================  ===============
-Apple        ``AAPL``           ``AAPL``
-Berkshire B  ``BRK-B``          ``BRK.B``
-S&P 500      ``^GSPC``          ``SPX``
-Nasdaq Comp  ``^IXIC``          ``COMP``
-Dow          ``^DJI``           ``DJI``
-===========  =================  ===============
+============  ==================  ===========  ===============
+Instrument    TradingView         Finviz       Yahoo Finance
+============  ==================  ===========  ===============
+Apple         ``NASDAQ:AAPL``     ``AAPL``     ``AAPL``
+Gold spot     ``OANDA:XAUUSD``    *(none)*     ``XAUUSD=X`` or ``GC=F``
+S&P 500       ``SP:SPX``          ``SPX``      ``^GSPC``
+EUR/USD       ``FX:EURUSD``       *(none)*     ``EURUSD=X``
+Bitcoin       ``BITSTAMP:BTCUSD`` *(none)*     ``BTC-USD``
+Brent         ``NYMEX:BZ1!``      *(none)*     ``BZ=F``
+============  ==================  ===========  ===============
 
-:func:`to_yahoo`, :func:`to_finviz` and :func:`to_tradingview` bridge those
-spellings so a single ``symbol`` argument reaches both providers correctly.
+A hardcoded table cannot keep up: it needs a row per instrument, per provider,
+and it silently produces a wrong-but-plausible ticker when a row is missing, which is exactly how ``XAUUSD`` became ``NASDAQ:XAUUSD`` and every provider
+returned "no data".
+
+This module resolves dynamically instead:
+
+1. **Explicit wins.** ``OANDA:XAUUSD`` is taken at face value for TradingView;
+   the bare part is then mapped for the other two.
+2. **Native search.** Each provider is asked with its own symbol-search
+   endpoint. TradingView has a documented symbol search, Yahoo has
+   ``/v1/finance/search``, Finviz only accepts slugs so it gets a read-probe.
+3. **Ranked match.** Candidates are scored on exact-symbol match, asset class
+   and venue preference. A result must clear a confidence floor, otherwise it
+   is not used: guessing is worse than reporting "not found".
+4. **Cached.** Resolution is memoised per (provider, query) for the life of the
+   process plus a TTL, because a symbol's identity does not change minute to
+   minute and the search endpoints are rate-limited.
+
+Nothing here raises on a miss. :func:`resolve` returns a :class:`Resolution`
+whose ``symbol`` is ``None`` when the provider genuinely has nothing, so the
+tool layer can label that provider ``NO_DATA`` instead of inventing a ticker.
 """
 from __future__ import annotations
 
+import asyncio
 import re
+import time
+from dataclasses import dataclass, field
+from typing import Any, Iterable
 
-#: Index spellings, keyed by the canonical short name used in responses.
-INDEX_ALIASES: dict[str, dict[str, str]] = {
+import httpx
+
+from .providers_state import NoDataError
+from .ratelimit import RateLimited, call, limiter
+
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+)
+
+#: Venues that carry the canonical, most-liquid listing for an instrument, in
+#: preference order. When several exchanges quote the same ticker, the first
+#: match here wins, so ``XAUUSD`` resolves to ``OANDA:XAUUSD`` rather than a
+#: broker's duplicate.
+VENUE_PREFERENCE: tuple[str, ...] = (
+    "NASDAQ", "NYSE", "AMEX", "ARCA", "BATS", "OTC",
+    "SP", "DJ", "NASDAQ", "TVC", "NYMEX", "COMEX", "CME", "CBOT", "ICEUS",
+    "FX", "OANDA", "FOREXCOM", "FXCM", "BITSTAMP", "COINBASE", "BINANCE",
+    "KUCOIN", "BYBIT", "BIST", "EGX", "LSE", "XETR", "TSE",
+)
+
+#: Asset classes we consider "the same kind" when ranking search hits.
+_CLASS_HINTS: dict[str, tuple[str, ...]] = {
+    "stock": ("stock", "dr", "fund", "etf"),
+    "fund": ("fund", "etf", "stock"),
+    "etf": ("etf", "fund", "stock"),
+    "index": ("index",),
+    "commodity": ("commodity", "cfd", "futures"),
+    "futures": ("futures", "commodity"),
+    "forex": ("forex", "cfd", "commodity"),
+    "crypto": ("crypto", "coin"),
+}
+
+#: Sentinels used in the response so a caller can tell "we did not find it"
+#: apart from "we did not look".
+_CACHE: dict[tuple[str, str], tuple[float, "Resolution"]] = {}
+_CACHE_TTL = 3600.0
+
+
+@dataclass
+class Candidate:
+    """One search hit, provider-specific but shaped the same."""
+
+    symbol: str          # provider-native ticker
+    venue: str = ""      # exchange / market the provider put it on
+    description: str = ""
+    asset_class: str = ""
+    score: float = 0.0
+
+
+@dataclass
+class Resolution:
+    """The outcome of resolving one user symbol for one provider."""
+
+    query: str
+    provider: str
+    symbol: str | None = None
+    venue: str = ""
+    description: str = ""
+    asset_class: str = ""
+    method: str = "none"        # explicit | search | alias | none
+    confidence: float = 0.0
+    candidates: list[Candidate] = field(default_factory=list)
+    note: str = ""
+
+    @property
+    def found(self) -> bool:
+        return self.symbol is not None
+
+    def require(self) -> str:
+        """Return the symbol or raise ``NoDataError`` (the tool-layer contract)."""
+        if self.symbol is None:
+            raise NoDataError(self.provider, self.note or f"no match for {self.query!r}")
+        return self.symbol
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query,
+            "provider": self.provider,
+            "symbol": self.symbol,
+            "venue": self.venue,
+            "description": self.description,
+            "asset_class": self.asset_class,
+            "method": self.method,
+            "confidence": round(self.confidence, 2),
+            "note": self.note,
+        }
+
+
+# ── Scoring ──────────────────────────────────────────────────────────────────
+
+
+def _normalise(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def _venue_rank(venue: str) -> int:
+    upper = (venue or "").upper()
+    try:
+        return VENUE_PREFERENCE.index(upper)
+    except ValueError:
+        return len(VENUE_PREFERENCE)
+
+
+def score_candidate(query: str, candidate: Candidate, wanted_class: str = "") -> float:
+    """Rank a search hit against what the caller asked for.
+
+    Exact ticker match dominates; asset class and venue preference break ties.
+    A fuzzy-match hit can score at most 0.6, which is below the acceptance
+    floor, so "something vaguely similar" is never silently used.
+    """
+    wanted = _normalise(query.split(":")[-1])
+    got = _normalise(candidate.symbol.split(":")[-1])
+    score = 0.0
+    if got == wanted:
+        score += 0.6
+    elif got.startswith(wanted) or wanted.startswith(got):
+        score += 0.25
+    else:
+        score += 0.0
+
+    if wanted_class:
+        allowed = _CLASS_HINTS.get(wanted_class, (wanted_class,))
+        if candidate.asset_class in allowed:
+            score += 0.25
+
+    score += max(0.0, 0.15 - _venue_rank(candidate.venue) * 0.005)
+    return min(score, 1.0)
+
+
+CONFIDENCE_FLOOR = 0.55
+
+
+def _pick(query: str, candidates: Iterable[Candidate], wanted_class: str = "") -> tuple[Candidate | None, float]:
+    scored = []
+    for candidate in candidates:
+        candidate.score = score_candidate(query, candidate, wanted_class)
+        scored.append(candidate)
+    if not scored:
+        return None, 0.0
+    scored.sort(key=lambda c: (c.score, -_venue_rank(c.venue)), reverse=True)
+    best = scored[0]
+    return (best, best.score) if best.score >= CONFIDENCE_FLOOR else (None, best.score)
+
+
+# ── TradingView ──────────────────────────────────────────────────────────────
+
+
+async def _tradingview_search(query: str) -> list[Candidate]:
+    url = "https://symbol-search.tradingview.com/symbol_search/v3/"
+    params = {
+        "text": query,
+        "hl": "1",
+        "exchange": "",
+        "lang": "en",
+        "search_type": "",
+        "domain": "production",
+        "sort_by_country": "US",
+    }
+
+    async def _once() -> list[Candidate]:
+        paced = limiter("TRADINGVIEW")
+        await paced.wait_turn()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            response = await client.get(
+                url, params=params, headers={"User-Agent": UA, "Origin": "https://www.tradingview.com"}
+            )
+        if response.status_code == 429:
+            raise RateLimited("TRADINGVIEW", "symbol search HTTP 429")
+        response.raise_for_status()
+        payload = response.json()
+        out: list[Candidate] = []
+        for hit in payload.get("symbols") or []:
+            ticker = re.sub(r"<[^>]+>", "", hit.get("symbol") or "")
+            venue = hit.get("exchange") or ""
+            if not ticker:
+                continue
+            out.append(
+                Candidate(
+                    symbol=ticker,
+                    venue=venue,
+                    description=re.sub(r"<[^>]+>", "", hit.get("description") or ""),
+                    asset_class=(hit.get("type") or "").lower(),
+                )
+            )
+        return out
+
+    return await call("TRADINGVIEW", _once)
+
+
+async def _tradingview_quotes(tickers: list[str]) -> set[str]:
+    """Which of these tickers the scanner will actually return a row for.
+
+    TradingView's symbol *search* and its *scanner* disagree: search offers
+    ``OANDA:BTCUSD`` and ``OANDA:ETHUSD``, but the scanner has no row for either
+    (verified live). Resolution that stops at search hands the quote path a
+    ticker that cannot be quoted, and the tool reports "no data" for an
+    instrument TradingView does carry, under a different venue, ``BITSTAMP``.
+    """
+    from .providers.tradingview import native
+
+    try:
+        rows = await native.scan(tickers, columns=("name",))
+    except Exception:  # noqa: BLE001 - verification is best-effort
+        return set(tickers)
+    return {str(row.get("ticker") or "").upper() for row in rows}
+
+
+async def resolve_tradingview(query: str, *, asset_class: str = "") -> Resolution:
+    """Resolve to an ``EXCHANGE:SYMBOL`` pair TradingView actually quotes."""
+    query = query.strip()
+    explicit = ":" in query
+    bare = query.split(":", 1)[1].upper() if explicit else query.upper()
+
+    if explicit:
+        # Trust the caller's venue; the quote path surfaces a real miss as
+        # NO_DATA. Verifying here would cost a request on every explicit call.
+        resolution = Resolution(
+            query=query,
+            provider="TRADINGVIEW",
+            symbol=query.upper(),
+            venue=query.split(":", 1)[0].upper(),
+            method="explicit",
+            confidence=1.0,
+        )
+        return resolution
+
+    try:
+        candidates = await _tradingview_search(bare)
+    except RateLimited as exc:
+        return Resolution(
+            query=query,
+            provider="TRADINGVIEW",
+            note=f"{exc.provider} is rate limited; symbol not resolved",
+        )
+    except Exception as exc:  # noqa: BLE001 - search failure is not fatal
+        return Resolution(
+            query=query,
+            provider="TRADINGVIEW",
+            note=f"symbol search failed: {type(exc).__name__}",
+            candidates=[],
+        )
+
+    # Rank every plausible candidate, then confirm with the scanner. Search
+    # rankings alone are not evidence that a ticker is quotable.
+    for candidate in candidates:
+        candidate.score = score_candidate(bare, candidate, asset_class)
+    scored = sorted(
+        candidates,
+        key=lambda c: (c.score, -_venue_rank(c.venue)),
+        reverse=True,
+    )
+    shortlist = [c for c in scored if c.score >= CONFIDENCE_FLOOR][:5]
+    if not shortlist:
+        best = scored[0] if scored else None
+        return Resolution(
+            query=query,
+            provider="TRADINGVIEW",
+            note=f"no TradingView symbol matched {query!r}",
+            confidence=best.score if best else 0.0,
+            candidates=scored[:5],
+        )
+
+    tickers = [
+        f"{c.venue}:{c.symbol}".upper() if c.venue else c.symbol.upper()
+        for c in shortlist
+    ]
+    quotable = await _tradingview_quotes(tickers)
+    chosen = next(
+        (c for c, t in zip(shortlist, tickers) if t in quotable),
+        None,
+    )
+    if chosen is None:
+        return Resolution(
+            query=query,
+            provider="TRADINGVIEW",
+            note=(
+                "search matched but the scanner quotes none of: "
+                + ", ".join(tickers)
+            ),
+            confidence=shortlist[0].score,
+            candidates=shortlist,
+        )
+
+    ticker = f"{chosen.venue}:{chosen.symbol}".upper() if chosen.venue else chosen.symbol.upper()
+    return Resolution(
+        query=query,
+        provider="TRADINGVIEW",
+        symbol=ticker,
+        venue=chosen.venue,
+        description=chosen.description,
+        asset_class=chosen.asset_class,
+        method="search",
+        confidence=chosen.score,
+        candidates=shortlist,
+    )
+
+
+# ── Yahoo Finance ────────────────────────────────────────────────────────────
+
+
+async def _yahoo_search(query: str) -> list[Candidate]:
+    url = "https://query2.finance.yahoo.com/v1/finance/search"
+
+    async def _once() -> list[Candidate]:
+        paced = limiter("YAHOO")
+        await paced.wait_turn()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            response = await client.get(
+                url,
+                params={"q": query, "quotesCount": 10, "newsCount": 0},
+                headers={"User-Agent": UA, "Accept": "application/json"},
+            )
+        if response.status_code == 429:
+            raise RateLimited("YAHOO", "search HTTP 429")
+        response.raise_for_status()
+        payload = response.json()
+        out: list[Candidate] = []
+        for hit in payload.get("quotes") or []:
+            symbol = hit.get("symbol")
+            if not symbol:
+                continue
+            out.append(
+                Candidate(
+                    symbol=symbol,
+                    venue=hit.get("exchange") or "",
+                    description=hit.get("shortname") or hit.get("longname") or "",
+                    asset_class=(hit.get("quoteType") or "").lower(),
+                )
+            )
+        return out
+
+    return await call("YAHOO", _once)
+
+
+#: ISO-4217 codes Yahoo quotes as FX pairs. Restricting the suffix rule to real
+#: currencies stops an arbitrary six-letter equity ticker from being rewritten
+#: into a pair that cannot exist.
+_CURRENCY_CODES: frozenset[str] = frozenset(
+    """
+    USD EUR GBP JPY CHF CAD AUD NZD SEK NOK DKK PLN HUF CZK TRY RUB ZAR
+    MXN BRL ARS CLP COP PEN INR IDR THB SGD HKD KRW CNY TWD ILS AED SAR
+    """.split()
+)
+
+#: ``XXXYYY`` where both halves are currencies -> ``XXXYYY=X``.
+_FX_PAIR = re.compile(r"^([A-Z]{3})([A-Z]{3})$")
+
+#: Crypto tickers Yahoo quotes with a dash instead of a suffix.
+_CRYPTO_PAIR = re.compile(
+    r"^(BTC|ETH|SOL|XRP|DOGE|ADA|BNB|LTC|AVAX|DOT|LINK|BCH|XLM|ATOM|ETC)(USD|EUR|GBP)$"
+)
+
+#: Instruments Yahoo simply does not carry, with the reason. Spot metals are the
+#: important case: ``XAUUSD=X`` was a *fabricated* ticker, it returns HTTP 404.
+#: Yahoo's nearest print is COMEX futures (``GC=F``), which is a different
+#: instrument trading at a different price, so substituting it would be a proxy
+#: claim rather than a quote. Reporting "not carried" is the honest answer.
+_YAHOO_UNAVAILABLE: dict[str, str] = {
+    "XAUUSD": "Yahoo Finance has no spot gold pair; its nearest series is COMEX "
+              "gold futures (GC=F), a different instrument, not substituted.",
+    "XAGUSD": "Yahoo Finance has no spot silver pair (its series is SI=F futures).",
+    "XPTUSD": "Yahoo Finance has no spot platinum pair.",
+    "XPDUSD": "Yahoo Finance has no spot palladium pair.",
+}
+
+
+def _yahoo_suffix(query: str) -> str | None:
+    """Apply Yahoo's documented mechanical suffix conventions.
+
+    Only rules that have been confirmed against the chart endpoint are here.
+    A rule that *looks* plausible but fabricates a ticker is worse than no rule:
+    the caller gets a 404 six layers later with no idea why.
+    """
+    pair = _FX_PAIR.match(query)
+    if pair and pair.group(1) in _CURRENCY_CODES and pair.group(2) in _CURRENCY_CODES:
+        return f"{query}=X"
+    if _CRYPTO_PAIR.match(query):
+        base, quote = query[:-3], query[-3:]
+        return f"{base}-{quote}"
+    return None
+
+
+_YAHOO_INDEX_ALIASES: dict[str, str] = {
+    "SPX": "^GSPC", "GSPC": "^GSPC", "COMP": "^IXIC", "IXIC": "^IXIC",
+    "DJI": "^DJI", "DJX": "^DJI", "RUT": "^RUT", "VIX": "^VIX", "NDX": "^NDX",
+    "RUT2000": "^RUT",
+}
+
+
+async def resolve_yahoo(query: str, *, asset_class: str = "") -> Resolution:
+    """Resolve to a Yahoo chart-API symbol."""
+    query = query.strip().upper()
+    bare = query.split(":", 1)[-1]
+    if query.startswith("^"):
+        bare = query
+
+    if bare in _YAHOO_INDEX_ALIASES:
+        return Resolution(
+            query=query,
+            provider="YAHOO",
+            symbol=_YAHOO_INDEX_ALIASES[bare],
+            method="alias",
+            asset_class="index",
+            confidence=0.95,
+        )
+
+    if bare in _YAHOO_UNAVAILABLE:
+        return Resolution(
+            query=query,
+            provider="YAHOO",
+            note=_YAHOO_UNAVAILABLE[bare],
+            asset_class=asset_class,
+        )
+
+    derived = _yahoo_suffix(bare)
+    if derived:
+        return Resolution(
+            query=query,
+            provider="YAHOO",
+            symbol=derived,
+            method="alias",
+            confidence=0.9,
+            note="derived from Yahoo's documented suffix convention",
+        )
+
+    explicit = ":" in query
+    search_for = bare if explicit else query
+
+    try:
+        candidates = await _yahoo_search(search_for)
+    except RateLimited as exc:
+        return Resolution(
+            query=query,
+            provider="YAHOO",
+            note=f"{exc.provider} is rate limited; symbol not resolved",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return Resolution(
+            query=query,
+            provider="YAHOO",
+            note=f"symbol search failed: {type(exc).__name__}",
+        )
+
+    if explicit:
+        wanted_venue = query.split(":", 1)[0]
+        for candidate in candidates:
+            if candidate.venue.upper() == wanted_venue:
+                candidate.score = 1.0
+                return Resolution(
+                    query=query,
+                    provider="YAHOO",
+                    symbol=candidate.symbol,
+                    venue=candidate.venue,
+                    description=candidate.description,
+                    asset_class=candidate.asset_class,
+                    method="search",
+                    confidence=1.0,
+                    candidates=candidates[:5],
+                )
+
+    best, confidence = _pick(bare, candidates, asset_class)
+    if best is None:
+        return Resolution(
+            query=query,
+            provider="YAHOO",
+            note=f"no Yahoo Finance symbol matched {query!r}",
+            confidence=confidence,
+            candidates=sorted(candidates, key=lambda c: c.score, reverse=True)[:5],
+        )
+    return Resolution(
+        query=query,
+        provider="YAHOO",
+        symbol=best.symbol,
+        venue=best.venue,
+        description=best.description,
+        asset_class=best.asset_class,
+        method="search",
+        confidence=confidence,
+        candidates=sorted(candidates, key=lambda c: c.score, reverse=True)[:5],
+    )
+
+
+# ── Finviz ───────────────────────────────────────────────────────────────────
+
+
+def resolve_finviz(query: str, *, asset_class: str = "") -> Resolution:
+    """Finviz only carries US-listed equities and ETFs, and has no search API.
+
+    So resolution is a normalisation plus an honesty check: a US ticker passes
+    through, a share-class dot is converted (``BRK.B`` is already Finviz's own
+    spelling), and anything that is not a US slug is reported as not served
+    rather than being sent to a page that will 404.
+    """
+    bare = query.strip().upper().split(":", 1)[-1]
+    if asset_class and asset_class.lower() not in {"stock", "etf", "fund", "equity"}:
+        return Resolution(
+            query=query,
+            provider="FINVIZ",
+            note=f"Finviz does not carry {asset_class} instruments",
+            asset_class=asset_class,
+        )
+
+    # Indices are not quote pages on Finviz. ``/stock?t=SPX`` and
+    # ``/stock?t=DJI`` both return HTTP 404, and ``COMP`` is not the Nasdaq
+    # Composite there, it is Compass Inc, a real equity. Claiming those tickers
+    # used to make ``market_indices`` report a Finviz level that never existed.
+    # Finviz's index data lives only in the ``/api/indices_data`` island, which
+    # ``fv_access.indices`` reads directly.
+    canonical = canonical_index(bare)
+    if canonical or bare.startswith("^"):
+        return Resolution(
+            query=query,
+            provider="FINVIZ",
+            note=(
+                "Finviz quotes indices only through its indices feed, not a "
+                "per-ticker page"
+            ),
+            asset_class="index",
+        )
+
+    # Foreign listings and provider-specific venues are out of scope for Finviz.
+    if "." in bare and not re.fullmatch(r"[A-Z]{1,5}\.[A-Z]{1,2}", bare):
+        return Resolution(
+            query=query,
+            provider="FINVIZ",
+            note="Finviz has no page for foreign-listed tickers",
+        )
+    if re.search(r"(-USD|=X|\^)", bare) or re.fullmatch(r"[A-Z]{6}", bare):
+        return Resolution(
+            query=query,
+            provider="FINVIZ",
+            note="Finviz carries US equities/ETFs only",
+        )
+    if not re.fullmatch(r"[A-Z][A-Z0-9\-]{0,6}", bare):
+        return Resolution(
+            query=query,
+            provider="FINVIZ",
+            note=f"{bare!r} is not a US ticker",
+        )
+    # BRK-B is Yahoo's spelling of Finviz's BRK.B.
+    if "-" in bare and len(bare) <= 7:
+        head, _, tail = bare.partition("-")
+        if head.isalpha() and tail.isalpha() and len(tail) <= 2:
+            bare = f"{head}.{tail}"
+    return Resolution(
+        query=query,
+        provider="FINVIZ",
+        symbol=bare,
+        method="normalise",
+        confidence=1.0,
+        asset_class=asset_class or "stock",
+    )
+
+
+# ── Facade ───────────────────────────────────────────────────────────────────
+
+
+async def resolve(
+    query: str,
+    provider: str,
+    *,
+    asset_class: str = "",
+    refresh: bool = False,
+) -> Resolution:
+    """Resolve one user-supplied symbol for one provider (cached)."""
+    provider = provider.upper()
+    cache_key = (provider, f"{query.strip().upper()}|{asset_class}")
+    if not refresh:
+        hit = _CACHE.get(cache_key)
+        if hit and time.monotonic() - hit[0] < _CACHE_TTL:
+            return hit[1]
+
+    if provider == "TRADINGVIEW":
+        result = await resolve_tradingview(query, asset_class=asset_class)
+    elif provider == "YAHOO":
+        result = await resolve_yahoo(query, asset_class=asset_class)
+    elif provider == "FINVIZ":
+        result = resolve_finviz(query, asset_class=asset_class)
+    else:
+        raise ValueError(f"unknown provider {provider!r}")
+
+    _CACHE[cache_key] = (time.monotonic(), result)
+    return result
+
+
+async def resolve_all(query: str, *, asset_class: str = "") -> dict[str, Resolution]:
+    """Resolve the same query for all three providers concurrently."""
+    results = await asyncio.gather(
+        resolve(query, "TRADINGVIEW", asset_class=asset_class),
+        resolve(query, "FINVIZ", asset_class=asset_class),
+        resolve(query, "YAHOO", asset_class=asset_class),
+    )
+    return {r.provider: r for r in results}
+
+
+def clear_cache() -> None:
+    _CACHE.clear()
+
+
+# ── Synchronous helpers ──────────────────────────────────────────────────────
+#
+# Resolution above answers "which ticker does provider X use". The helpers below
+# answer the cheaper, purely mechanical questions the shapers ask afterwards:
+# "strip the venue from this label", "which canonical index is this level".
+# They never touch the network, so they are safe to call in a formatting loop.
+#
+# Index spellings still need a table: ``SPX`` / ``SP:SPX`` / ``^GSPC`` are
+# three names for one instrument and no search API will tell you they are the
+# same series. The table is the list of indices this server reports, not a
+# guess about arbitrary tickers.
+
+INDEX_ALIASES: dict[str, dict[str, Any]] = {
     "SPX": {"yahoo": "^GSPC", "finviz": "SPX", "tradingview": "SP:SPX", "name": "S&P 500"},
     "COMP": {"yahoo": "^IXIC", "finviz": "COMP", "tradingview": "NASDAQ:IXIC", "name": "NASDAQ Composite"},
     "DJI": {"yahoo": "^DJI", "finviz": "DJI", "tradingview": "DJ:DJI", "name": "Dow Jones Industrial Average"},
@@ -34,11 +670,11 @@ INDEX_ALIASES: dict[str, dict[str, str]] = {
 _INDEX_LOOKUP: dict[str, str] = {}
 for _canonical, _map in INDEX_ALIASES.items():
     _INDEX_LOOKUP[_canonical.lower()] = _canonical
-    for _spelling in ("yahoo", "finviz"):
+    for _spelling in ("yahoo", "finviz", "tradingview"):
         _value = _map.get(_spelling)
-        if _value:
-            _INDEX_LOOKUP[_value.lower()] = _canonical
-            _INDEX_LOOKUP[_value.lower().lstrip("^")] = _canonical
+        if isinstance(_value, str) and _value:
+            _INDEX_LOOKUP.setdefault(_value.lower(), _canonical)
+            _INDEX_LOOKUP.setdefault(_value.lower().lstrip("^"), _canonical)
 
 #: Yahoo-style crypto/FX tickers that Finviz has no equivalent for.
 _NON_EQUITY = re.compile(r"(-USD|=X|^[A-Z]{3,5}USDT$|^\^)", re.IGNORECASE)
@@ -62,7 +698,7 @@ def strip_exchange(symbol: str) -> str:
 
 
 def to_finviz(symbol: str) -> str:
-    """Convert a symbol to Finviz's spelling (``BRK-B`` -> ``BRK.B``)."""
+    """Finviz's spelling for a symbol (``BRK-B`` -> ``BRK.B``, ``SPX`` stays)."""
     raw = strip_exchange(symbol).strip().upper()
     index = canonical_index(raw)
     if index and INDEX_ALIASES[index].get("finviz"):
@@ -75,7 +711,7 @@ def to_finviz(symbol: str) -> str:
 
 
 def to_yahoo(symbol: str) -> str:
-    """Convert a symbol to Yahoo's spelling (``BRK.B`` -> ``BRK-B``)."""
+    """Yahoo's spelling for a symbol (``BRK.B`` -> ``BRK-B``, ``SPX`` -> ``^GSPC``)."""
     raw = strip_exchange(symbol).strip().upper()
     index = canonical_index(raw)
     if index:
@@ -92,14 +728,18 @@ def is_equity(symbol: str) -> bool:
     raw = strip_exchange(symbol).strip().upper()
     if not raw or _NON_EQUITY.search(raw):
         return False
-    # Foreign listings use dotted suffixes Finviz does not carry.
     if "." in raw and not raw.replace(".", "").isalnum():
         return False
     return bool(re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", raw))
 
 
 def to_tradingview_candidates(symbol: str) -> list[str]:
-    """Candidate ``EXCHANGE:SYMBOL`` spellings for a TradingView scanner lookup."""
+    """Legacy venue candidates for a bare US ticker.
+
+    Kept for the paths that have not moved to :func:`resolve` yet. New code
+    should call :func:`resolve_tradingview`, which asks TradingView where the
+    symbol actually lives instead of assuming a US venue.
+    """
     raw = strip_exchange(symbol).strip().upper()
     if ":" in symbol:
         return [symbol.strip().upper()]

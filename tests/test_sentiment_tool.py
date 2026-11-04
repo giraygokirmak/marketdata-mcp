@@ -1,7 +1,7 @@
 """Token-free sentiment path: Marketaux preferred, local scoring as fallback.
 
 These tests pin the promise the user actually asked for: ``market_sentiment``
-works with no API key at all. They also pin the honesty requirement — a local
+works with no API key at all. They also pin the honesty requirement, a local
 lexicon score must never be presented as vendor output, and "no material to
 score" must never become a fabricated neutral-looking 0.0.
 """
@@ -60,11 +60,11 @@ async def test_local_path_is_attributed_to_finviz_not_tradingview(no_token, fake
     """The headlines are Finviz's; only the lexicon scoring is ours.
 
     Labelling the envelope TRADINGVIEW would attribute the data to a provider
-    that did not supply it — the exact mislabelling this server exists to avoid.
+    that did not supply it, the exact mislabelling this server exists to avoid.
     """
     result = await tools_tradingview.market_sentiment("AAPL")
     assert result["data_provider"] == "FINVIZ"
-    assert result["verification"] == "UNVERIFIED"
+    assert result["verification"] == "SINGLE_SOURCE"
     assert "FINVIZ" in result["sources"]
     assert "TRADINGVIEW" not in result["sources"]
 
@@ -151,15 +151,14 @@ async def test_rejected_token_falls_back_locally_instead_of_reporting_zero(
 @pytest.mark.asyncio
 async def test_combined_analysis_sentiment_leg_needs_no_token(no_token, monkeypatch):
     """The composite's sentiment leg must also survive without a token."""
-    from tapebasis import fv_access
+    from tapebasis import fv_access, tv_access, yh_access
 
-    monkeypatch.setattr(
-        tools_tradingview, "tv_access",
-        type("T", (), {"technical_analysis_sync": staticmethod(lambda *a, **k: {
+    async def fake_technical_analysis(symbol, exchange="NASDAQ", timeframe="1D"):
+        return {
             "price_data": {"current_price": 331.9, "volume": 1000},
-            "rsi": {"value": 41.7}, "atr": {"value": 7.4},
-        })}),
-    )
+            "rsi": {"value": 41.7},
+            "atr": {"value": 7.4},
+        }
 
     async def fake_news(symbol, limit=30, include_reactions=True):
         return {"news": [{"headline": "Apple beats estimates"}], "count": 1, "as_of": "x"}
@@ -167,8 +166,25 @@ async def test_combined_analysis_sentiment_leg_needs_no_token(no_token, monkeypa
     async def fake_snapshot(symbol):
         return {"numeric": {"Price": 331.9}}
 
+    async def fake_quote(symbol):
+        return {"price": 331.9, "change_pct": -1.9}
+
+    async def fake_resolve(query, provider, **kwargs):
+        from tapebasis.symbols import Resolution
+
+        return Resolution(
+            query=query,
+            provider=provider,
+            symbol={"TRADINGVIEW": "NASDAQ:AAPL"}.get(provider, "AAPL"),
+            method="explicit",
+            confidence=1.0,
+        )
+
+    monkeypatch.setattr(tv_access, "technical_analysis", fake_technical_analysis)
     monkeypatch.setattr(fv_access, "news", fake_news)
     monkeypatch.setattr(fv_access, "snapshot", fake_snapshot)
+    monkeypatch.setattr(yh_access, "quote", fake_quote)
+    monkeypatch.setattr(tools_tradingview, "_yahoo_resolution", lambda s: fake_resolve(s, "YAHOO"))
 
     result = await tools_tradingview.combined_analysis("AAPL")
     sentiment_leg = result["data"]["sentiment"]

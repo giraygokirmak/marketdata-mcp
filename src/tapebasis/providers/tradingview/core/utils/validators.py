@@ -35,7 +35,7 @@ STOCK_EXCHANGES: Set[str] = {
     "asx",
     "sse", "szse", "chn",
     "twse", "tpex",
-    "tadawul", "tasi",                  # Saudi Stock Exchange (Tadawul) — All Share Index (TASI)
+    "tadawul", "tasi",                  # Saudi Stock Exchange (Tadawul), All Share Index (TASI)
     # European + Canadian stock markets. The first name on each line is the
     # venue's canonical name (its coinlist file); the rest are aliases that
     # COINLIST_ALIASES points at the same file.
@@ -84,7 +84,7 @@ EXCHANGE_SCREENER = {
     "hk": "hongkong",       # Hong Kong (alternate)
     "hsi": "hongkong",      # Hang Seng Index constituents
     "nyse": "america",
-    # NYSE Arca / AMEX — ETFs (GDX, GLD, XLE, SPY, QQQ …) are listed here in TradingView
+    # NYSE Arca / AMEX, ETFs (GDX, GLD, XLE, SPY, QQQ …) are listed here in TradingView
     "amex": "america",      # TradingView canonical prefix for NYSE Arca ETFs
     "nysearca": "america",  # alias: NYSE Arca (official name used by issuers)
     "pcx": "america",       # alias: Pacific Exchange (historical MIC code for NYSE Arca)
@@ -96,7 +96,7 @@ EXCHANGE_SCREENER = {
     # Taiwan Stock Market Support
     "twse": "taiwan",       # Taiwan Stock Exchange (臺灣證券交易所)
     "tpex": "taiwan",       # Taipei Exchange (櫃買中心, OTC market)
-    # Saudi Stock Market (Tadawul) — TradingView scanner uses /ksa/
+    # Saudi Stock Market (Tadawul), TradingView scanner uses /ksa/
     "tadawul": "ksa",
     "tasi": "ksa",          # alias: Tadawul All Share Index
     # ── European + Canadian stock markets (TradingView country slugs) ──
@@ -209,7 +209,7 @@ _TRADINGVIEW_SYMBOL_ALIASES: dict = {
     "IX0001": "TWSE:IX0001",
     "TWSE:TAIEX": "TWSE:IX0001",
     "TWSE:IX0001": "TWSE:IX0001",
-    # Spot metals in forex-pair notation — unambiguous (no venue lists a stock or
+    # Spot metals in forex-pair notation, unambiguous (no venue lists a stock or
     # token called "XAUUSD"/"XAGUSD"), so these always map to the TVC CFD feed.
     "XAUUSD": "TVC:GOLD",
     "XAGUSD": "TVC:SILVER",
@@ -235,7 +235,7 @@ _TRADINGVIEW_SYMBOL_ALIASES: dict = {
 
 # "Soft" commodity aliases: bare tickers that ALSO exist as real equities/indices
 # (e.g. NYSE:GOLD is Barrick Gold Corp). normalize_tradingview_symbol() applies
-# these ONLY when the caller is not targeting a stock exchange — so NYSE:GOLD keeps
+# these ONLY when the caller is not targeting a stock exchange, so NYSE:GOLD keeps
 # resolving to the equity, while a crypto/default context maps "gold" to spot gold.
 _COMMODITY_SOFT_ALIASES: dict = {
     "GOLD": "TVC:GOLD",
@@ -301,7 +301,7 @@ def sanitize_exchange(ex: str, default: str = "kucoin") -> str:
 
 
 # Strict variants used at the MCP tool boundary. The sanitize_* pair silently
-# substitutes the default on bad input — an LLM asking for KRAKEN got KUCOIN
+# substitutes the default on bad input, an LLM asking for KRAKEN got KUCOIN
 # data with no indication anything was wrong. These raise instead, and the
 # tool wrapper converts the exception to a typed error envelope the caller
 # can self-correct from. Empty/None still means "use the default": callers

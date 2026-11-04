@@ -9,7 +9,7 @@
 #   2. Choose "Create the first page", save anything (this script overwrites it)
 #
 # After that this script is idempotent: it clones, replaces the pages, and
-# pushes. Docs are authored in docs/wiki/ with wiki-style links (Home,
+# pushes. Docs are authored in docs/wiki/ with wiki-style links (Home
 # Getting-Started, ...), so the same bytes work in both places.
 #
 # Usage: scripts/publish-wiki.sh [--dry-run]
@@ -25,7 +25,7 @@ cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
 if [[ ! -d "$SRC" ]]; then
-    echo "error: $SRC not found — run this from the repository" >&2
+    echo "error: $SRC not found, run this from the repository" >&2
     exit 1
 fi
 
@@ -36,7 +36,7 @@ error: the wiki repository does not exist yet.
 
 GitHub creates it only once a first page has been added in the web UI:
   https://github.com/giraygokirmak/tapebasis/wiki
-Choose "Create the first page" and save it — this script overwrites the content.
+Choose "Create the first page" and save it, this script overwrites the content.
 EOF
     exit 1
 fi

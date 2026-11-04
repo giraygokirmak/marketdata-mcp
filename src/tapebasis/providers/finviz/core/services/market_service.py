@@ -1,19 +1,19 @@
 """
-Market-wide services — index snapshot, why-is-it-moving, options chain.
+Market-wide services, index snapshot, why-is-it-moving, options chain.
 
 The three live together because they answer "what is the state of the market
 right now" rather than "profile one ticker":
 
-* ``/api/indices_data``      — DJI, COMP, SPX, IWM intraday OHLCV series.
-* ``/api/stocks-why-moving/{t}`` — Finviz's own AI explainer for the day's move
+* ``/api/indices_data``     : DJI, COMP, SPX, IWM intraday OHLCV series.
+* ``/api/stocks-why-moving/{t}``, Finviz's own AI explainer for the day's move
   (also available as the ``why-stock-moving-init-data-0`` island on the quote
   page; the API is preferred because it is fetched without the page).
-* ``/stock?t={t}&ty=oc``     — options chain inside ``route-init-data``.
+* ``/stock?t={t}&ty=oc``    : options chain inside ``route-init-data``.
 
 The why-moving endpoint has two spellings: ``/api/stocks-why-moving/{t}``
 returns one record, and ``/api/stocks-why-moving/boxover/{t}`` returns the same
 record (the ``boxover`` variant is what the hover card requests). Both are 404
-for tickers with no explainer entry, which is reported as ``NO_DATA`` — not as
+for tickers with no explainer entry, which is reported as ``NO_DATA``, not as
 an error the caller should retry.
 """
 from __future__ import annotations

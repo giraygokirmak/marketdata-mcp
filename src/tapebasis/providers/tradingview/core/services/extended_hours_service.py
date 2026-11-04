@@ -18,7 +18,7 @@ Behavior across the trading day:
 - Post-market session (4:00-8:00pm ET): all three populated
 - Overnight / weekend: returns whatever's most recent in each window
 
-Returns `null` for whichever session has no data — Claude can quote that
+Returns `null` for whichever session has no data, Claude can quote that
 back to the user as "no after-hours print yet" rather than guessing.
 """
 from __future__ import annotations

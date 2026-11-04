@@ -1,5 +1,5 @@
 """
-Quote + fundamentals services — the ``/stock?t={ticker}`` document route.
+Quote + fundamentals services, the ``/stock?t={ticker}`` document route.
 
 finviz has no JSON endpoint for a single ticker's quote (``/api/quote`` answers
 ``{"error":"invalid quote query"}`` for every parameter spelling), so this is
@@ -167,7 +167,7 @@ async def get_quote(ticker: str) -> dict[str, Any]:
 async def get_snapshot(ticker: str) -> dict[str, Any]:
     """The 84 snapshot metrics only, with finviz's own metric descriptions.
 
-    Use this when an agent needs fundamentals but not prices/peers — the
+    Use this when an agent needs fundamentals but not prices/peers; the
     payload is a third of :func:`get_quote` and far easier to reason about.
     """
     symbol = validate_ticker(ticker)
@@ -259,7 +259,7 @@ def _has_fundamental_series(fa: Any) -> bool:
     """True when the FA chart island actually carries points.
 
     finviz renders an empty island (``{"annual": {"values": [[],[],[]]}, ...}``)
-    for tickers with no reported statements — common for recent IPOs and
+    for tickers with no reported statements, common for recent IPOs and
     foreign issuers filing 6-K only. That shape is truthy but meaningless, so it
     is rejected explicitly instead of returning zeros.
     """
@@ -281,11 +281,11 @@ async def get_earnings(ticker: str) -> dict[str, Any]:
     payload is trimmed here to the parts an agent actually uses:
 
     * ``next_earnings_date`` / ``earnings_date``
-    * ``reported``  — last 12 quarterly rows (actual vs estimate)
-    * ``annual``    — annual history
-    * ``revisions`` — most recent 200 estimate-revision rows
-    * ``price_reactions`` — post-earnings moves
-    * ``fundamental_series`` — the ``fa-init-data-0`` chart series
+    * ``reported``, last 12 quarterly rows (actual vs estimate)
+    * ``annual``, annual history
+    * ``revisions``, most recent 200 estimate-revision rows
+    * ``price_reactions``, post-earnings moves
+    * ``fundamental_series``, the ``fa-init-data-0`` chart series
     """
     symbol = validate_ticker(ticker)
     html = await finviz_client.fetch_html(_stock_url(symbol, tab="ea"))
@@ -308,7 +308,7 @@ async def get_earnings(ticker: str) -> dict[str, Any]:
             ErrorCode.NO_DATA,
             f"finviz.com has no earnings history for {symbol} "
             "(no reported quarters, no annual history and an empty "
-            "fundamental series — typical for a recent IPO or a foreign "
+            "fundamental series, typical for a recent IPO or a foreign "
             "private issuer that only files 6-K)",
             ticker=symbol,
         )
@@ -337,7 +337,7 @@ async def get_dilution(ticker: str) -> dict[str, Any]:
     at the Dilution page, but only for companies whose share count Finviz
     considers dilution-prone: large caps return ``null`` for the island and
     render the *income statement breakdown* instead
-    (``income-breakdown-init-data-0``). Both shapes are handled — the response
+    (``income-breakdown-init-data-0``). Both shapes are handled; the response
     always carries ``company`` (possibly ``None``) and adds whichever data the
     tab actually had.
     """

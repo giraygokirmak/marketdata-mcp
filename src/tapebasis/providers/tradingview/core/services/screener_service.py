@@ -1,5 +1,5 @@
 """
-Screener Service — low-level data-fetching helpers for TradingView analysis.
+Screener Service, low-level data-fetching helpers for TradingView analysis.
 
 All functions call TradingView APIs and return normalised Row / MultiRow lists.
 They are intentionally free of MCP concerns so they can be unit-tested directly.
@@ -61,12 +61,12 @@ except ImportError:
 # ── Batch fast-fail budget ────────────────────────────────────────────────────
 # Critical: without these guards, a batched scanner that loops over 6-8 batches
 # during an upstream cliff sleeps the failure cooldown (15s default) between
-# every single batch — producing a 90-150s "hang" before BatchExecutionError
+# every single batch, producing a 90-150s "hang" before BatchExecutionError
 # finally surfaces. The fix is two layered bails:
 #
 #   TRADINGVIEW_MCP_BATCH_MAX_CONSECUTIVE_FAILS (default 2)
 #       After N consecutive batch failures, stop iterating remaining batches
-#       — upstream is clearly down, further attempts just waste wall-clock.
+#      : upstream is clearly down, further attempts just waste wall-clock.
 #
 #   TRADINGVIEW_MCP_BATCH_BUDGET_S (default 30)
 #       Total wall-clock budget for the whole batched scan. When the budget
@@ -140,7 +140,7 @@ def fetch_bollinger_analysis(
         )
 
     # Scan the FULL symbol list. The old `symbols[: limit * 2]` truncation
-    # meant only the alphabetical head of the exchange was ever screened — on
+    # meant only the alphabetical head of the exchange was ever screened, on
     # EGX (292 names, sorted) mid-alphabet symbols could never appear in
     # squeeze results regardless of their setups.
     screener = EXCHANGE_SCREENER.get(exchange, "crypto")
@@ -154,7 +154,7 @@ def fetch_bollinger_analysis(
     if not analysis:
         raise ScreenerServiceError(
             ErrorCode.UPSTREAM_ERROR,
-            "Analysis failed for every batch — upstream storm; retry shortly.",
+            "Analysis failed for every batch, upstream storm; retry shortly.",
             retryable=True,
         )
 
@@ -211,8 +211,7 @@ def fetch_trending_analysis(
         rating_filter: BB rating value to match when filter_type == 'rating'.
         limit:         Maximum rows to return.
         sort:          'desc' → biggest gainers first; 'asc' → biggest losers
-                       first. Sorting happens BEFORE the limit truncation —
-                       'asc' returns the market's actual losers, not the
+                       first. Sorting happens BEFORE the limit truncation, 'asc' returns the market's actual losers, not the
                        bottom of a gainers-truncated list.
 
     Returns:
@@ -285,8 +284,7 @@ def fetch_trending_analysis(
             except Exception:
                 pass
 
-            # Fast-fail: N consecutive failures means upstream is cliffing —
-            # iterating remaining batches just multiplies the cooldown sleeps.
+            # Fast-fail: N consecutive failures means upstream is cliffing, # iterating remaining batches just multiplies the cooldown sleeps.
             if consecutive_failures >= max_consec:
                 aborted_reason = (
                     f"{consecutive_failures} consecutive batch failures "
@@ -474,7 +472,7 @@ def fetch_multi_timeframe_patterns(
 
         # Query the CALLER'S symbols. The old whole-exchange scan with
         # .limit(len(symbols)) returned the first N arbitrary rows of the
-        # market — while the cache key below was keyed on the ignored symbol
+        # market, while the cache key below was keyed on the ignored symbol
         # list, so different symbol lists collided onto the same wrong rows.
         prefix = get_tv_exchange_prefix(exchange)
         full_symbols = [s if ":" in s else f"{prefix}:{s}" for s in symbols]
@@ -534,7 +532,7 @@ def fetch_multi_timeframe_patterns(
 # hourly automation asked for HYPEUSDT@binance 100+ times a week; the
 # SYMBOL_NOT_FOUND envelope named the right venues but the automation never
 # read it. When the requested venue doesn't list a ticker that another venue
-# does, failing a deterministic request helps nobody — analyze on a listing
+# does, failing a deterministic request helps nobody, analyze on a listing
 # venue and SAY SO in the response (requested_exchange/resolved_exchange).
 # KUCOIN/MEXC first: their screener rows have been the most complete for the
 # long-tail tickers this fallback exists for.
@@ -575,7 +573,7 @@ def pick_fallback_exchange(symbol: str, requested_exchange: str) -> Optional[str
 # The chart site and the scanner are DIFFERENT backends: charts render funds,
 # certificates, and delisted symbols that the scanner (which powers every
 # analysis tool here) does not serve at all. E.g. EGX:KASABF is a fund
-# certificate — its chart URL works, but no scanner/TA call can ever return
+# certificate, its chart URL works, but no scanner/TA call can ever return
 # data for it. When the local coinlists have no suggestion, one best-effort
 # symbol-search lookup tells the caller WHAT the symbol actually is instead
 # of leaving a bare "not found" that reads like a typo.
@@ -585,7 +583,7 @@ _SYMBOL_SEARCH_TIMEOUT_S = 6
 # Instrument types the scanner backend serves per market. Anything else
 # (fund, bond, warrant, right, index, dr …) is chart-only.
 _SCANNER_SERVED_TYPES = {"stock", "crypto", "spot", "futures", "forex", "cfd", "swap"}
-# Successful lookups only — a transient network failure must not be cached.
+# Successful lookups only, a transient network failure must not be cached.
 _symbol_search_cache: dict[tuple, Optional[dict]] = {}
 
 
@@ -608,8 +606,7 @@ def _parse_symbol_search(rows: list, bare: str, exchange: str) -> Optional[dict]
 
 
 def lookup_tradingview_instrument(symbol: str, exchange: str = "") -> Optional[dict]:
-    """Best-effort TradingView symbol-search lookup. None on any failure —
-    this only ever ENRICHES an error message and must never break one."""
+    """Best-effort TradingView symbol-search lookup. None on any failure, this only ever ENRICHES an error message and must never break one."""
     import json as _json
     import urllib.parse as _uparse
     import urllib.request as _urequest
@@ -633,7 +630,7 @@ def lookup_tradingview_instrument(symbol: str, exchange: str = "") -> Optional[d
             data = _json.loads(resp.read().decode("utf-8"))
         rows = data.get("symbols") or []
     except Exception:
-        return None  # not cached — transient failures may recover
+        return None  # not cached, transient failures may recover
 
     info = _parse_symbol_search(rows, bare, exchange)
     if len(_symbol_search_cache) < 256:
@@ -648,10 +645,10 @@ def symbol_not_found_error(symbol: str, exchange: str, **context: Any) -> dict:
     of times (e.g. HYPEUSDT on BINANCE) because the old bare-string error gave
     no retryability signal and no alternative. This envelope says explicitly:
     not retryable here, but *these* exchanges list the ticker (from the bundled
-    coinlists — zero network cost). Only when the local lists have nothing
+    coinlists, zero network cost). Only when the local lists have nothing
     does ONE best-effort symbol-search call fire, to distinguish "typo" from
     "real instrument the scanner backend doesn't serve" (fund certificates,
-    bonds, delisted names — chart-only on TradingView).
+    bonds, delisted names, chart-only on TradingView).
     """
     listed_on = exchanges_listing_symbol(symbol)
     message = f"No data found for {symbol} on {exchange}."
@@ -670,8 +667,8 @@ def symbol_not_found_error(symbol: str, exchange: str, **context: Any) -> dict:
             extra["instrument_exchange"] = info["exchange"]
             if info["type"] and info["type"].lower() not in _SCANNER_SERVED_TYPES:
                 message += (
-                    f" {symbol} DOES exist on TradingView — as a {info['type']} "
-                    f"({info['description']!r} on {info['exchange']}) — but the "
+                    f" {symbol} DOES exist on TradingView, as a {info['type']} "
+                    f"({info['description']!r} on {info['exchange']}), but the "
                     f"screener/analysis backend this server uses only serves "
                     f"tradable stocks and crypto, not {info['type']}s. Its chart "
                     f"page works because charts use a different backend. No tool "
@@ -680,7 +677,7 @@ def symbol_not_found_error(symbol: str, exchange: str, **context: Any) -> dict:
             elif info["exchange"] and info["exchange"].upper() != (exchange or "").upper():
                 message += (
                     f" TradingView lists {symbol} as a {info['type'] or 'symbol'} on "
-                    f"{info['exchange']} — retry with exchange=\"{info['exchange']}\"."
+                    f"{info['exchange']}, retry with exchange=\"{info['exchange']}\"."
                 )
             else:
                 message += (
@@ -689,7 +686,7 @@ def symbol_not_found_error(symbol: str, exchange: str, **context: Any) -> dict:
                 )
         else:
             message += (
-                " No local listing found on any supported exchange — verify the ticker"
+                " No local listing found on any supported exchange, verify the ticker"
                 " spelling; retrying the same request will return the same error."
             )
     return make_error(
@@ -731,7 +728,7 @@ def analyze_coin(
 
     full_symbol = normalize_tradingview_symbol(symbol, exchange)
     # Screener follows the RESOLVED symbol's venue (e.g. XAUUSD→TVC:GOLD→"cfd"),
-    # not the caller's exchange guess — see resolve_screener_for_symbol().
+    # not the caller's exchange guess, see resolve_screener_for_symbol().
     screener = resolve_screener_for_symbol(full_symbol, exchange)
 
     try:
@@ -851,7 +848,7 @@ def analyze_coin(
         }
     except Exception as exc:
         # Transient upstream outages (TradingView's 30-90s empty-body cliffs)
-        # dominate this path — signal machine-readable retryability so agents
+        # dominate this path, signal machine-readable retryability so agents
         # wait-and-retry instead of hammering or giving up.
         return make_error(
             ErrorCode.UPSTREAM_ERROR,
@@ -908,7 +905,7 @@ def scan_consecutive_candles(
     if not analysis:
         return make_error(
             ErrorCode.UPSTREAM_ERROR,
-            "Pattern analysis failed for every batch — upstream storm; retry shortly.",
+            "Pattern analysis failed for every batch, upstream storm; retry shortly.",
             retryable=True, retry_after_s=60,
             exchange=exchange, timeframe=timeframe,
         )

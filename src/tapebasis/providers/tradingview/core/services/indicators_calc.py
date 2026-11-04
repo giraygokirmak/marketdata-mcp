@@ -1,5 +1,5 @@
 """
-Technical Indicators Calculator — pure Python stdlib, zero dependencies.
+Technical Indicators Calculator, pure Python stdlib, zero dependencies.
 
 All functions take a list of float closing prices (or OHLCV dicts)
 and return computed indicator values.
@@ -157,7 +157,7 @@ def calc_atr(
     highs: list[float], lows: list[float], closes: list[float], period: int = 14
 ) -> list[Optional[float]]:
     """
-    Average True Range — measures market volatility.
+    Average True Range, measures market volatility.
     True Range = max(H-L, |H-prevC|, |L-prevC|)
     ATR = Wilder's smoothed average of TR.
     """

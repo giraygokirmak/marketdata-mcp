@@ -1,4 +1,4 @@
-"""Finviz-only tools — served, but explicitly labelled single-source.
+"""Finviz-only tools, served, but explicitly labelled single-source.
 
 Finviz is the sole provider for these capabilities: SEC filings, ownership
 tables, short interest, dilution risk, peers, the "why is it moving" explainer

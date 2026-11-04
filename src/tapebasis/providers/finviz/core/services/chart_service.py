@@ -1,5 +1,5 @@
 """
-Chart service — server-rendered PNG charts from ``/chart.ashx``.
+Chart service, server-rendered PNG charts from ``/chart.ashx``.
 
 Why a PNG and not an SVG/JSON series
 ------------------------------------

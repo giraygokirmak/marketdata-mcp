@@ -1,5 +1,5 @@
 """
-Filings service — SEC filings from ``/api/quote/filings``.
+Filings service, SEC filings from ``/api/quote/filings``.
 
 This is the one fully structured per-ticker endpoint finviz exposes without
 authentication. Parameters (reverse-engineered from the quote page's React

@@ -2,23 +2,27 @@
 
 <img src="docs/logo.svg" alt="Tapebasis" width="360">
 
-**Two tapes, one basis.** An MCP server that serves **TradingView** and **Finviz** market data
-together, cross-checks every overlapping figure, and labels each response with the provider that
-actually produced it.
+**Three tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
+market data together, cross-checks every overlapping figure, and labels each response with the
+provider that actually produced it.
 
 </div>
 
 ---
 
 *Basis* is the finance term for the price difference between two markets quoting the same asset.
-*Tape* is the ticker tape. Tapebasis is the spread between two feeds, measured on every call —
+*Tape* is the ticker tape. Tapebasis is the spread between three feeds, measured on every call:
 zero when they agree, reported when they don't.
 
-The point is redundancy you can *see*. When both providers answer, the data is cross-verified. When
-only one answers, you get the data — clearly marked as single-source. When neither answers, you get
-`NONE` instead of a plausible-looking number. And because both providers scrape or call undocumented
-upstreams, a background monitor probes every endpoint and reports API/schema drift inside ordinary
-tool responses.
+The point is redundancy you can *see*. Every provider that could answer a field is asked, natively
+in parallel. When several answer, the data is cross-checked. When only one answers, you get the data,
+clearly marked as single-source. When none answers, you get `NONE` instead of a
+plausible-looking number. And because all three providers scrape or call undocumented upstreams, a
+background monitor probes every endpoint and reports API/schema drift inside ordinary tool responses.
+
+Each provider is genuinely independent: TradingView's own scanner and chart websocket, Finviz's HTML
+and JSON islands, Yahoo's chart API. No leg proxies another: a provider that quietly forwards a
+competitor's numbers is worthless as a cross-check.
 
 [![Tests](https://github.com/giraygokirmak/tapebasis/actions/workflows/test.yml/badge.svg)](https://github.com/giraygokirmak/tapebasis/actions/workflows/test.yml)
 [![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-3776ab)](https://github.com/giraygokirmak/tapebasis)
@@ -28,110 +32,178 @@ tool responses.
 
 ## The `data_provider` contract
 
-Every tool result carries exactly one of four values:
+Every tool result carries exactly one of five values. It states **coverage**, never agreement:
 
-| Value         | Meaning                                                            |
-| ------------- | ------------------------------------------------------------------ |
-| `BOTH`        | Both providers answered **and** the compared values agree. Cross-verified. |
-| `TRADINGVIEW` | Only TradingView had this data. Served, but **not** cross-verified. |
-| `FINVIZ`      | Only Finviz had this data. Served, but **not** cross-verified.      |
-| `NONE`        | Neither provider could supply it. No value is presented.            |
+| Value         | Meaning                                                                    |
+| ------------- | -------------------------------------------------------------------------- |
+| `ALL`         | Every provider that was asked answered. Coverage is complete for this call. |
+| `TRADINGVIEW` | Only TradingView answered. Served, but **not** corroborated.               |
+| `FINVIZ`      | Only Finviz answered. Served, but **not** corroborated.                    |
+| `YAHOO`       | Only Yahoo Finance answered. Served, but **not** corroborated.             |
+| `NONE`        | No provider could supply it. No value is presented.                        |
+
+`ALL` means "every provider asked answered", not "they agree". Agreement is a separate axis, and it
+lives in `comparisons[].match`. A two-of-three response is still `ALL`; `providers_answered` names
+exactly which providers contributed.
 
 The same envelope also contains:
 
 ```jsonc
 {
-  "data_provider": "BOTH",
-  "verification": "VERIFIED",           // VERIFIED | UNVERIFIED | UNAVAILABLE
-  "notice": "Data came from BOTH providers ...",  // sentence to relay to the user
-  "data": { ... },                      // the reconciled payload — one value per field
-  "fields": { "price": "BOTH", "peers": "FINVIZ" },   // per-field provenance
-  "freshness": {                        // why `data` holds the value it does
-    "tradingview": "2026-11-03T21:00:01+00:00",
-    "finviz": "2026-11-03T20:59:00+00:00",
-    "chosen": "TRADINGVIEW",
-    "reason": "newest market print timestamp"
+  "data_provider": "ALL",
+  "verification": "MULTI_SOURCE",        // MULTI_SOURCE | SINGLE_SOURCE | UNAVAILABLE
+  "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO"],
+  "notice": "Every provider asked answered (TradingView, Finviz and Yahoo Finance). ...",
+  "data": { ... },                       // the reconciled payload, one value per field
+  "fields": { "price": "ALL", "peers": "FINVIZ" },   // per-field provenance
+  "freshness": {                         // why `data` holds the value it does
+    "tradingview": "2026-11-04T00:59:53+00:00",
+    "finviz": "2026-11-04T10:42:00+00:00",
+    "yahoo": "2026-11-03T21:00:01+00:00",
+    "chosen": "FINVIZ",
+    "decision": "newest",                // newest | tie | no_timestamp
+    "newest_print": "2026-11-04T10:42:00+00:00",
+    "reason": "FINVIZ printed most recently (2026-11-04T10:42:00+00:00)"
   },
-  "comparisons": [                      // the actual side-by-side numbers
-    { "field": "price", "tv": 331.9, "fv": 331.9,
-      "match": true, "diff": 0.0, "diff_pct": 0.0, "tolerance_pct": 0.5 }
+  "comparisons": [                       // the actual side-by-side numbers
+    { "field": "price",
+      "values": { "TRADINGVIEW": 331.9, "FINVIZ": 332.33, "YAHOO": 331.9 },
+      "match": true, "diff_pct": 0.1294, "tolerance_pct": 0.5,
+      "pairs": [ { "between": ["TRADINGVIEW", "FINVIZ"], "match": true, "diff_pct": 0.1294 }, ... ],
+      "chosen": "FINVIZ" }
   ],
-  "sources": { "TRADINGVIEW": "...", "FINVIZ": "..." },
+  "resolutions": { "TRADINGVIEW": { "symbol": "NASDAQ:AAPL", ... }, ... },
+  "sources": { "TRADINGVIEW": "scanner.tradingview.com", "FINVIZ": "...", "YAHOO": "..." },
   "errors": [ { "provider": "FINVIZ", "code": "...", "message": "..." } ],
   "warnings": [ "..." ],
-  "degraded": false,                    // true when the health monitor saw drift/downtime
-  "generated_at": "2026-11-04T06:25:56+00:00"
+  "degraded": false,                     // true when the health monitor saw drift/downtime
+  "generated_at": "2026-11-04T10:43:02+00:00"
 }
 ```
 
-**One price, and it is the freshest one.** When both providers answer, `data` holds a single value
-per compared field: the reading from whichever provider printed more recently. `freshness` records
-both print times and why one won — ties and unparseable timestamps fall back to Finviz, a fixed
-documented default. Both original readings always stay in `comparisons`.
+**One price, and it is the newest print.** Every provider that can supply a field is asked. `data`
+holds exactly one value per compared field: the reading whose market print is newest. Providers that
+share the newest instant are the only tie-break candidates, and the documented default order
+(`FINVIZ`, `TRADINGVIEW`, `YAHOO`) picks between them. `freshness.decision` is the machine-readable
+outcome (`newest`, `tie`, `no_timestamp`), so a caller never has to parse the sentence in `reason`.
+Every original reading stays in `comparisons.values`.
 
-**Disagreements are never silently resolved.** If the providers report different prices, both values
-stay in `comparisons`, the field is named in `notice` and `warnings`, and the response stays `BOTH`
-(both *did* answer — they just disagree). The single value in `data` is the fresher print, and the
-notice says so; an agent can see exactly how far apart the two sources are.
+**Disagreements are never silently resolved.** If the providers report different prices, all values
+stay in `comparisons`, the field is named in `notice` and `warnings`, and `data_provider` stays `ALL`
+(every asked provider *did* answer; they just disagree). The single value in `data` is the newest
+print, and the notice says so.
+
+**A field measured against a session baseline is not compared across sessions.** A day-change
+percentage or a session volume is derived from the previous close of the session the print belongs
+to. Finviz in a pre-market session and Yahoo at the prior close will legitimately differ, so such a
+pair is reported as `not_comparable` (with the hour gap in `pairs[].not_comparable`) instead of being
+called a provider conflict. Both readings still appear; the field is listed in `warnings` as not
+cross-checked.
 
 Implementation: [`reconcile.py`](src/tapebasis/reconcile.py) (fan-out + comparison),
-[`freshness.py`](src/tapebasis/freshness.py) (print-time selection),
-[`providers_state.py`](src/tapebasis/providers_state.py) (envelope).
+[`freshness.py`](src/tapebasis/freshness.py) (print-time parsing),
+[`providers_state.py`](src/tapebasis/providers_state.py) (envelope + labels).
+
+---
+
+## Symbols are resolved per provider
+
+The same instrument is spelled differently by each upstream, and the differences are not mechanical:
+
+| Instrument | TradingView | Finviz | Yahoo Finance |
+| --- | --- | --- | --- |
+| Apple | `NASDAQ:AAPL` | `AAPL` | `AAPL` |
+| Gold (spot) | `OANDA:XAUUSD` | *(not carried)* | *(not carried, `XAUUSD=X` is a 404)* |
+| S&P 500 | `SP:SPX` | *(indices feed only)* | `^GSPC` |
+| EUR/USD | `FX:EURUSD` | *(not carried)* | `EURUSD=X` |
+| Bitcoin | `BITSTAMP:BTCUSD` | *(not carried)* | `BTC-USD` |
+
+[`symbols.py`](src/tapebasis/symbols.py) resolves each query per provider, caches the answer for an
+hour, and records how it was derived in `resolutions` (`explicit`, `alias`, `search`, `none`). Two
+rules keep it honest:
+
+- **A ticker is only returned if the provider can actually quote it.** TradingView's symbol *search*
+  offers `OANDA:BTCUSD`, but its *scanner* has no row for it, resolution verifies against the
+  scanner and picks `BITSTAMP:BTCUSD` instead.
+- **A missing instrument is not an outage.** `NotApplicable` becomes `NOT_ATTEMPTED`, which is
+  excluded from `errors`. "Finviz does not carry spot gold" is a structural fact, not a failure.
+
+XAUUSD, for example, resolves to `OANDA:XAUUSD` for TradingView and nothing for the other two, so the
+response is `TRADINGVIEW` / `SINGLE_SOURCE`, served and clearly labelled, not hidden.
 
 ---
 
 ## Tools (33)
 
-### Dual-source — both providers asked, answers compared
+### Multi-source, every capable provider asked, answers compared
 
-| Tool | Fields cross-checked | Tolerance |
+| Tool | Providers | Fields cross-checked |
 | --- | --- | --- |
-| `stock_quote` | price, change %, previous close, 52-w high/low, P/E, RSI(14), volume | 0.5 % price, 2 % P/E, 5 % RSI |
-| `stock_prices` | price and change % per ticker (per-row `data_provider`) | 0.5 % / 2 % |
-| `stock_screener` | per-ticker change % for every row both providers return | 3 % |
-| `market_indices` | S&P 500, Dow, Nasdaq Composite, Russell 2000, VIX levels | 0.5 % |
-| `stock_options_chain` | volume per contract, matched by strike (OI when both report it) | 5 % / 1 % |
-| `stock_earnings` | next release date; EPS history | same-day match |
-| `stock_extended_hours` | after-hours / pre-market price | 0.5 % |
-| `technical_analysis` | price, RSI(14), ATR(14), volume vs. Finviz's snapshot | 0.5 %–12 % |
-| `stock_news` | headline title overlap between feeds | exact title match |
+| `stock_quote` | all three | price, change %, previous close, 52-w high/low, P/E, RSI(14), volume |
+| `stock_prices` | all three | price and change % per ticker (per-row `data_provider`) |
+| `stock_screener` | TradingView + Finviz | per-row price for the tickers both return |
+| `market_indices` | all three | S&P 500, Dow, Nasdaq Composite, Russell 2000, VIX levels |
+| `stock_options_chain` | Finviz + Yahoo (+ TV underlying) | volume per contract, matched by strike; OI when both report it |
+| `stock_earnings` | all three | next release date; EPS history |
+| `stock_extended_hours` | all three | after-hours / pre-market price |
+| `technical_analysis` | all three | price, RSI(14), ATR(14), volume |
+| `stock_news` | all three | headline title overlap between the feeds |
+| `stock_backtest` | TradingView + Yahoo | strategy metrics run twice on two independent OHLCV feeds |
+| `stock_backtest_compare` | TradingView + Yahoo | same, plus whether both feeds pick the same winning strategy |
+| `market_snapshot` | TradingView + Yahoo | indices, major crypto, FX pairs, ETFs |
+| `combined_analysis` | all three | underlying price |
 
-`stock_news` needs `MARKETAUX_API_TOKEN` for the TradingView leg; without it the response is
-`FINVIZ` with `NOT_CONFIGURED` in `errors` — and says so.
+`stock_news`'s TradingView leg is the provider's licensed Marketaux feed and needs
+`MARKETAUX_API_TOKEN`; without it that leg is `NOT_ATTEMPTED` and the response reports the feeds that
+did answer.
 
-**No tool requires an API key.** `market_sentiment` prefers Marketaux when
-`MARKETAUX_API_TOKEN` is set, and otherwise scores Finviz headlines locally (VADER with a
-financial lexicon) — deterministic, offline, free. Because the headlines are Finviz's, that
-path is labelled `FINVIZ`, not `TRADINGVIEW`. See [Sentiment](#sentiment-no-api-key-required).
+**No tool requires an API key.** `market_sentiment` prefers Marketaux when `MARKETAUX_API_TOKEN` is
+set, and otherwise scores Finviz headlines locally (VADER with a financial lexicon). That path is
+deterministic, offline and free. Because the headlines are Finviz's, that path is labelled `FINVIZ`; see [Sentiment](#sentiment-no-api-key-required).
 
-### Finviz-only — served, labelled `FINVIZ`, explicitly unverified
+### Finviz-only, served, labelled `FINVIZ`, explicitly single-source
 
 `stock_filings` · `stock_ownership` (insider + institutional + short interest) · `stock_peers` ·
 `stock_why_moving` · `stock_chart` (PNG) · `stock_dilution` · `stock_screener_filters`
 
-TradingView has no equivalent dataset for any of these, so the envelope marks the TradingView side
-`NOT_ATTEMPTED` (not an error) and the notice states the data is not cross-verified.
+No other provider has an equivalent dataset, so those legs are marked `NOT_ATTEMPTED` (not an error)
+and the notice states the data is not cross-checked.
 
-### TradingView-only — served, labelled `TRADINGVIEW`, explicitly unverified
+### TradingView-only, served, labelled `TRADINGVIEW`, explicitly single-source
 
 `crypto_top_movers` · `crypto_bollinger_scan` · `crypto_volume_breakout` ·
 `crypto_multi_timeframe` · `crypto_multi_agent` · `futures_market_overview` · `futures_top_movers` ·
-`futures_watchlist` · `stock_backtest` · `stock_backtest_compare` · `market_snapshot` ·
-`bitcoin_market_pulse` · `egx_market_overview`
+`futures_watchlist` · `bitcoin_market_pulse` · `egx_market_overview`
 
-`market_sentiment` is single-source too, but which source depends on the environment — see
+`market_sentiment` is single-source too, but which source depends on the environment, see
 [Sentiment](#sentiment-no-api-key-required).
-
-### Composite
-
-- `combined_analysis` — TradingView technical read + sentiment + news, with the underlying price
-  cross-checked against Finviz. The only composite that can return `BOTH`.
 
 ### Ops
 
-- `tapebasis_health` — run the probes now (`refresh=True`) or read the cached verdict.
-- `tapebasis_tool_map` — every tool with its providers and comparison strategy, without any
+- `tapebasis_health`, run the probes now (`refresh=True`) or read the cached verdict.
+- `tapebasis_tool_map`, every tool with its providers and comparison strategy, without any
   upstream call.
+
+---
+
+## Rate limits are handled per provider
+
+Every upstream is undocumented and rate-limited by its owner, so every request goes through a
+per-provider limiter ([`ratelimit.py`](src/tapebasis/ratelimit.py)):
+
+| Control | What it does |
+| --- | --- |
+| `min_interval` | Hard floor between two requests to one provider, so a 30-ticker fan-out is not a 30-request burst |
+| `max_inflight` | Bounds concurrent requests per provider |
+| shared cooldown | After a `429` (or a websocket `invalid symbol`) every caller waits an exponentially growing, jittered pause, so one blocked request protects the whole process |
+| TTL cache | Absorbs the duplicate questions an agent naturally asks in one turn |
+
+Yahoo is paced slowest (1 request at a time, 1 s apart) because it starts answering `429` after a
+short burst. TradingView's websocket treats `invalid symbol` / `resolve error` as an IP-scoped block
+rather than a bad ticker, for the same reason. Current limiter state is exposed by
+`tapebasis_health` and `GET /health` under `rate_limits`.
+
+Defaults are tuned per provider and overridable; see [Configuration](#configuration).
 
 ---
 
@@ -146,7 +218,7 @@ the payload always says which one ran (`provider`, `scoring`, and the top-level 
 | no token, or Marketaux rejected/quota/outage | Finviz headlines scored locally (VADER) | `FINVIZ` |
 | neither available | labelled empty payload, `sentiment_score: null` | `NONE` |
 
-Why the labels differ: the **numbers are Finviz headlines** in the local path — only the scoring is
+Why the labels differ: the **numbers are Finviz headlines** in the local path; only the scoring is
 ours. Labelling that `TRADINGVIEW` would claim a provenance the data does not have.
 
 **Local scoring** ([`sentiment.py`](src/tapebasis/sentiment.py)) is VADER (MIT, ships its own
@@ -161,48 +233,54 @@ out-of-vocabulary. The overlay fixes that class of miss:
 | `Apple stock drops on weak margin forecast` | `-0.66` |
 | `Apple: 3 Key Takeaways for Long-Term Investors` | `0.00` |
 
-Scoring is deterministic — the same headlines always produce the same number — and never touches
+Scoring is deterministic: the same headlines always produce the same number, and it never touches
 the network.
 
 **A data gap is never dressed up as a finding.** `sentiment_score: 0.0` means "the tone is
 balanced", so it is never used for "nothing could be fetched". When there is no material to score
 the field is `null`, `sentiment_label` is `Unavailable`, and `note` says why. An invalid or
 expired Marketaux token therefore falls back to local scoring and records the reason in
-`licensed_path_unavailable` — it does not report a neutral market.
+`licensed_path_unavailable`; it does not report a neutral market.
 
 `MARKETAUX_API_TOKEN` also adds the second leg of `stock_news` (licensed article text + URLs).
-Without it, `stock_news` is `FINVIZ`-only — complete, labelled, and still useful.
+Without it, `stock_news` reports the Finviz and Yahoo feeds only: complete, labelled and still
+useful.
 
 ---
 
 ## Upstream change detection
 
-Both providers depend on things that can move without notice: Finviz's HTML class names and
-unversioned `/api/*` JSON islands, TradingView's scanner POST schema, Yahoo's chart API shape.
+All three providers depend on things that can move without notice: Finviz's HTML class names and
+unversioned `/api/*` JSON islands, TradingView's scanner POST schema and chart websocket protocol,
+and Yahoo's chart API shape.
 
 The monitor in [`health.py`](src/tapebasis/health.py) probes each upstream **independently of
 the provider code paths**, so a provider can't hide a break by catching its own exception:
 
-| Probe | Asserts |
-| --- | --- |
-| `finviz.indices_api` | `DJI`, `SPX`, `COMP` keys present |
-| `finviz.quote_html` | `js-snapshot-table` marker still in the rendered page |
-| `finviz.news_api` | `html` key present |
-| `tradingview.scanner_api` | `totalCount` and `data[0].d` present |
-| `tradingview.yahoo_chart_api` | `chart.result[0].meta` / `.timestamp` present |
+| Probe | Provider | Asserts |
+| --- | --- | --- |
+| `finviz.indices_api` | FINVIZ | `DJI`, `SPX`, `COMP` keys present |
+| `finviz.quote_html` | FINVIZ | `js-snapshot-table` marker still in the rendered page |
+| `finviz.news_api` | FINVIZ | `html` key present |
+| `tradingview.scanner_api` | TRADINGVIEW | `totalCount` and `data[0].d` present |
+| `tradingview.symbol_search` | TRADINGVIEW | symbol search still returns `symbols` |
+| `yahoo.chart_api` | YAHOO | `chart.result[0].meta` / `.timestamp` present |
+| `yahoo.chart_fx` | YAHOO | the `EURUSD=X` resolution path still answers |
+| `yahoo.chart_crypto` | YAHOO | the `BTC-USD` resolution path still answers |
 
-Each successful probe records a SHA-256 fingerprint of the payload's key paths as a **baseline**,
+Each successful probe records a SHA-256 fingerprint of the payload's key paths as a **baseline**
 persisted to `~/.tapebasis/health_state.json`. Later probes compare against it, so a renamed
 field is caught even if the endpoint still returns 200. Verdicts:
 
-- `OK` — status and shape match the baseline
-- `DRIFT` — answered, but the status/shape changed (renamed field, moved route, missing marker)
-- `DOWN` — timeout, connection error or unexpected HTTP status
-- `UNKNOWN` — not probed yet
+- `OK`: status and shape match the baseline
+- `DRIFT`: answered, but the status/shape changed (renamed field, moved route, missing marker)
+- `DOWN`: timeout, connection error or unexpected HTTP status
+- `UNKNOWN`: not probed yet
 
 Drift is surfaced, not swallowed: every tool response gets a `warnings` entry, `degraded: true`, and
-a `WARNING` appended to `notice`. The monitor runs in the background (`TAPEBASIS_HEALTH_INTERVAL`,
-default 300 s) and tool calls only read the cached verdict.
+a `WARNING` appended to `notice`, scoped to the providers this call actually used. The monitor runs
+in the background (`TAPEBASIS_HEALTH_INTERVAL`, default 300 s) and tool calls only read the cached
+verdict.
 
 ---
 
@@ -288,19 +366,29 @@ Everything is optional. See [`.env.example`](.env.example) for the full list.
 | `FINVIZ_CACHE_TTL` | `30` | Scraped-page cache lifetime (s) |
 | `FINVIZ_TIMEOUT` | `25` | finviz.com HTTP timeout (s) |
 | `FINVIZ_CHART_DIR` | `~/.tapebasis/charts` | Chart PNG output |
-| `TRADINGVIEW_MCP_MIN_INTERVAL_S` | `0.25` | Scanner request spacing |
-| `MARKETAUX_API_TOKEN` | — | Optional. Enables licensed Marketaux news + entity sentiment |
+| `TAPEBASIS_TV_MIN_INTERVAL` | `0.5` | TradingView request spacing (s) |
+| `TAPEBASIS_TV_MAX_INFLIGHT` | `2` | TradingView concurrent requests |
+| `TAPEBASIS_FINVIZ_MIN_INTERVAL` | `0.35` | Finviz request spacing (s) |
+| `TAPEBASIS_FINVIZ_MAX_INFLIGHT` | `2` | Finviz concurrent requests |
+| `TAPEBASIS_YAHOO_MIN_INTERVAL` | `1.0` | Yahoo request spacing (s) |
+| `TAPEBASIS_YAHOO_MAX_INFLIGHT` | `1` | Yahoo concurrent requests |
+| `TAPEBASIS_TV_MAX_RETRIES`, `TAPEBASIS_FINVIZ_MAX_RETRIES`, `TAPEBASIS_YAHOO_MAX_RETRIES` | `2` | Retries per provider request (the shared cooldown is not tunable) |
+| `MARKETAUX_API_TOKEN` | - | Optional. Enables licensed Marketaux news + entity sentiment |
 | `MARKETAUX_DAILY_BUDGET` | `90` | Marketaux request cap per day (free plan is 100) |
 
-No proxy configuration exists: both providers reach their upstreams directly.
+The legacy `TRADINGVIEW_MCP_*` variables still tune the provider-layer technical-analysis services
+while the scanner, websocket and every tool call go through the `TAPEBASIS_*` limiters above.
+
+No proxy configuration exists: every provider reaches its upstream directly.
 
 ## Reading a response correctly
 
 ```
 1. Check data_provider.
-   BOTH        -> quote the numbers; they were confirmed twice.
-   TRADINGVIEW -> quote them, but say the figure is single-source and unverified.
+   ALL         -> quote the numbers; every provider asked answered.
+   TRADINGVIEW -> quote them, but say the figure is single-source and not corroborated.
    FINVIZ      -> same, from the Finviz side.
+   YAHOO       -> same, from the Yahoo side.
    NONE        -> say no data is available. Do not invent one.
 
 2. Check degraded / warnings.
@@ -308,21 +396,27 @@ No proxy configuration exists: both providers reach their upstreams directly.
                 provider's figures may be stale or incomplete.
 
 3. Check fields for per-field provenance when the response mixes sources
-   (e.g. price is BOTH while peers is FINVIZ).
+   (e.g. price is ALL while peers is FINVIZ).
 
-4. Check comparisons when you need to show how far apart the two sources are.
+4. Check comparisons when you need to show how far apart the providers are.
+   match: true  -> they agree within tolerance.
+   match: false -> a real disagreement; every reading is in `values`.
+   match: null  -> not comparable (no print time, or different sessions).
+
+5. Check resolutions when a symbol behaved unexpectedly: it shows exactly which
+   ticker each provider was asked for, and why.
 ```
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"     # or, with uv: uv venv && uv pip install -e ".[dev]"
-pytest                      # 145 hermetic tests, no network
+pytest                      # 182 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 ```
 
 Tests mock at the HTTP boundary (`httpx.MockTransport`) and the provider-access boundary, so the
-suite runs offline and deterministically — including the drift-detection tests that corrupt a stored
+suite runs offline and deterministically, including the drift-detection tests that corrupt a stored
 baseline and assert the warning reaches a normal tool response.
 
 ## Layout
@@ -331,27 +425,65 @@ baseline and assert the warning reaches a normal tool response.
 src/tapebasis/
 ├── server.py             FastMCP instance, lifespan, /health, CLI
 ├── providers_state.py    DataProvider enum, errors, response envelope
-├── reconcile.py          concurrent fan-out, comparison, fallback, notice text
+├── reconcile.py          concurrent fan-out, comparison, freshness arbitration, notice text
 ├── freshness.py          market-print timestamps + freshest-print selection
+├── ratelimit.py          per-provider pacing, shared cooldown, TTL cache
 ├── merge_helpers.py      pure payload shapers (raw provider dict -> fields)
 ├── sentiment.py          token-free headline scoring (VADER + finance lexicon)
-├── symbols.py            BRK-B <-> BRK.B, ^GSPC <-> SPX, venue mapping
+├── symbols.py            dynamic per-provider symbol resolution + index aliases
 ├── health.py             upstream probes, fingerprints, drift state
-├── tv_access.py          typed access to the TradingView provider
+├── tv_access.py          typed access to TradingView's own data
 ├── fv_access.py          typed access to the Finviz provider
-├── tools_market.py       dual-source tools
+├── yh_access.py          typed access to the Yahoo Finance provider
+├── catalog.py            plain-data tool catalogue (providers + comparison strategy)
+├── tools_market.py       multi-source market tools
 ├── tools_finviz.py       Finviz-only tools
-├── tools_tradingview.py  TradingView-only tools
+├── tools_tradingview.py  TradingView-only tools + combined_analysis
 ├── tools_health.py       health + tool map
 └── providers/            provider implementations (TradingView, Finviz)
 ```
 
+## Documentation
+
+The full manual lives in [`docs/wiki/`](docs/wiki/) and is mirrored to the
+[GitHub wiki](https://github.com/giraygokirmak/tapebasis/wiki). Pages are authored with
+wiki-style links, so the same files render correctly in both places. `docs/` is the source of
+truth; the wiki is generated from it:
+
+```bash
+./scripts/publish-wiki.sh          # sync docs/wiki/*.md into the wiki
+./scripts/publish-wiki.sh --dry-run
+```
+
+The wiki is a separate git repository that GitHub only creates once a first page exists. That
+bootstrap is the one manual step: open the wiki tab, add any page, then run the script (it
+overwrites the placeholder).
+
+| Page | What it covers |
+| --- | --- |
+| [Home](docs/wiki/Home.md) | What the server is, install, first call |
+| [Getting Started](docs/wiki/Getting-Started.md) | Install → configure → first response |
+| [Response Contract](docs/wiki/Response-Contract.md) | Every envelope field, tolerances, disagreement handling |
+| [Tools Reference](docs/wiki/Tools-Reference.md) | All 33 tools, grouped, with arguments |
+| [Architecture](docs/wiki/Architecture.md) | Module boundaries, fan-out, rate limiting, health lifecycle |
+| [Health Monitor](docs/wiki/Health-Monitor.md) | Probes, fingerprints, drift detection |
+| [Sentiment](docs/wiki/Sentiment.md) | Marketaux path and the token-free VADER fallback |
+| [Configuration](docs/wiki/Configuration.md) | Every environment variable, with real defaults |
+| [Docker](docs/wiki/Docker.md) | Image, compose, volumes, healthcheck |
+| [Development](docs/wiki/Development.md) | Tests, layout, CI, adding a tool |
+| [Troubleshooting](docs/wiki/Troubleshooting.md) | Symptom → cause → fix |
+| [Design Decisions](docs/wiki/Design-Decisions.md) | Why the contract looks like this |
+
 ## Note on labelling
 
-The TradingView provider's price and OHLCV data actually come from Yahoo Finance's chart API, and its
-options chain from Yahoo's options endpoint. Responses say so in `sources`, and it is still labelled
-`TRADINGVIEW` because it is that provider's dataset — but it is not TradingView's own exchange feed,
-and the label should not be read as claiming it is.
+Every provider is asked for its own data. TradingView quotes come from
+`scanner.tradingview.com` and its chart websocket; Finviz from `finviz.com` HTML and JSON islands;
+Yahoo from `query1.finance.yahoo.com`. Nothing is proxied through another provider, and `sources`
+records the upstream each leg actually used.
+
+Where a capability exists on only some providers, that is stated rather than simulated: options
+chains come from Finviz and Yahoo (TradingView contributes only the underlying price), backtests run
+twice on TradingView and Yahoo OHLCV, and Finviz is never asked for crypto, FX or commodity quotes.
 
 ## Disclaimer
 
@@ -361,4 +493,4 @@ number reaching you; it does not eliminate it.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

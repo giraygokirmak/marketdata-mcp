@@ -66,7 +66,7 @@ def fv_quote_fields(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def tv_quote_fields(payload: dict[str, Any]) -> dict[str, Any]:
-    """Normalise a TradingView scanner row (the dual-source quote leg)."""
+    """Normalise a TradingView scanner row (one leg of a multi-source quote)."""
     return {
         "price": payload.get("close"),
         "change_percent": payload.get("change"),
@@ -151,6 +151,10 @@ def fv_indices_fields(payload: dict[str, Any]) -> dict[str, Any]:
             "day_low": row.get("day_low"),
             "name": row.get("name"),
             "source_ticker": name,
+            # ``lastDate`` is a bare ``YYYYMMDD``; the freshness parser reads it
+            # so a provider that has rolled into the next session is ordered
+            # correctly instead of being treated as a conflicting level.
+            "price_timestamp": row.get("last_update"),
         }
     return {"indices": out}
 
@@ -175,7 +179,9 @@ def tv_indices_fields(payload: dict[str, Any]) -> dict[str, Any]:
             "level": row.get("price"),
             "change_percent": row.get("change_pct"),
             "currency": row.get("currency"),
+            "name": row.get("name"),
             "source_ticker": symbol,
+            "price_timestamp": row.get("price_timestamp"),
         }
     return {"indices": out}
 
@@ -221,6 +227,26 @@ def tv_news_fields(payload: dict[str, Any]) -> dict[str, Any]:
             }
         )
     return {"items": normalised, "count": len(normalised), "ticker": payload.get("symbol")}
+
+
+def yahoo_news_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalise a Yahoo news-search payload (same shape as the TV shaper)."""
+    return tv_news_fields(payload)
+
+
+def yahoo_quote_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalise a Yahoo chart quote into the comparable field dict."""
+    return {
+        "price": payload.get("price"),
+        "change_percent": payload.get("change_pct"),
+        "previous_close": payload.get("previous_close"),
+        "week_52_high": payload.get("52w_high"),
+        "week_52_low": payload.get("52w_low"),
+        "currency": payload.get("currency"),
+        "exchange": payload.get("exchange"),
+        "market_state": payload.get("market_state"),
+        "price_timestamp": payload.get("market_time"),
+    }
 
 
 def news_overlap(tv_items: Iterable[dict[str, Any]], fv_items: Iterable[dict[str, Any]]) -> dict[str, Any]:
