@@ -236,3 +236,38 @@ def test_notice_names_the_fresher_provider_when_they_agree():
     text = notice_for(merged)
     assert "agree within tolerance" in text
     assert "TRADINGVIEW's because it printed more recently" in text
+
+
+# ── float32 noise at the provider boundary ──────────────────────────────────
+
+
+def test_finviz_float32_noise_is_rounded_before_it_can_be_displayed():
+    """Finviz serialises prices as 32-bit floats: 7568.92 arrives noise-padded.
+
+    This only mattered once a Finviz reading could be the *displayed* price
+    (freshness selection), because then the noise reaches a user.
+    """
+    from marketdata_mcp.fv_access import _round_floats
+
+    assert _round_floats({"level": 7568.919921875})["level"] == 7568.92
+    assert _round_floats([{"price": 331.8999938964844}])[0]["price"] == 331.9
+
+
+def test_rounding_keeps_precision_needed_for_greeks_and_percentages():
+    """6 significant digits — plenty for a delta, unlike a fixed 2 places."""
+    from marketdata_mcp.fv_access import _round_floats
+
+    assert _round_floats({"delta": -0.0028611675})["delta"] == -0.00286117
+    assert _round_floats({"change_percent": -1.897611728541031})["change_percent"] == -1.89761
+    assert _round_floats({"count": 4, "name": "SPX", "ok": None}) == {
+        "count": 4,
+        "name": "SPX",
+        "ok": None,
+    }
+
+
+def test_rounding_leaves_zero_and_non_finite_values_untouched():
+    from marketdata_mcp.fv_access import _round_floats
+
+    assert _round_floats({"zero": 0.0})["zero"] == 0.0
+    assert _round_floats({"neg_zero": -0.0})["neg_zero"] == 0.0
