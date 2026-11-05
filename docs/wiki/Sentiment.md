@@ -21,7 +21,9 @@ mislabelling this server exists to prevent. So the local path is `FINVIZ`, and
 
 Sentiment is single-source by nature. There is nothing to cross-check a sentiment score against, and
 inventing a second opinion would not make it corroborated. The label names whichever feed supplied
-the headlines, and that is the honest maximum for this capability.
+the headlines, and that is the honest maximum for this capability. Bloomberg is not a candidate
+source here: it publishes no comparable headline sentiment feed, and its quote pages are served
+single-source only, never as part of a comparison.
 
 ## Local scoring
 
