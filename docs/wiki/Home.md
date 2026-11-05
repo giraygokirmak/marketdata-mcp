@@ -4,7 +4,8 @@
 
 **Multiple tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
 market data together, cross-checks every overlapping figure, and labels each response with the
-provider that actually produced it.
+provider that actually produced it. **Bloomberg** is served too, as an explicitly single-source
+provider for the data nobody else here carries.
 
 *Basis* is the finance term for the price difference between two markets quoting the same asset.
 *Tape* is the ticker tape. Tapebasis is the spread between multiple feeds, measured on every call.
@@ -17,7 +18,9 @@ background monitor probes every endpoint and reports API/schema drift inside ord
 
 Each leg is genuinely independent: TradingView's own scanner and chart websocket, Finviz's HTML and
 JSON islands, Yahoo's chart API. A provider that quietly proxies another is worthless as a
-cross-check, so none does.
+cross-check, so none does. Bloomberg is the one provider kept *outside* the cross-check: its equity
+quotes are delayed and its statics duplicate Yahoo's, so it is served single-source rather than
+counted as a fourth independent reading. See [Bloomberg](#bloomberg-single-source-by-design).
 
 **No tool requires an API key.** Every capability works out of the box; `MARKETAUX_API_TOKEN` only
 upgrades news and sentiment to a licensed feed.
@@ -35,6 +38,7 @@ asks them all, compares, and tells the agent what it is holding.
 | Every asked provider answers, values agree | `ALL`, `comparisons[].match: true` | confirm the number against independent readings |
 | They answer but diverge | `ALL` + every value in `comparisons` + a warning | show that a disagreement exists |
 | One provider is down | `TRADINGVIEW`/`FINVIZ`/`YAHOO` + "not corroborated" | say the figure is single-source |
+| Only Bloomberg has it | `BLOOMBERG` + `cross_checked: false` | say what is uncorroborated and how stale |
 | All down | `NONE`, no value presented | avoid a stale or invented number |
 | Upstream markup changed | `degraded: true` + a named warning | avoid a silently empty or wrong response |
 
@@ -46,7 +50,7 @@ asks them all, compares, and tells the agent what it is holding.
 | --- | --- |
 | [Getting Started](Getting-Started) | Install, run over stdio or HTTP, first calls |
 | [Response Contract](Response-Contract) | The envelope, every field, how to read it correctly |
-| [Tools Reference](Tools-Reference) | All 33 tools, providers, and what is compared |
+| [Tools Reference](Tools-Reference) | All 35 tools, providers, and what is compared |
 | [Architecture](Architecture) | Module layout, data flow, why the pieces sit where they do |
 | [Health Monitor](Health-Monitor) | Probes, fingerprints, drift detection, baselines |
 | [Sentiment](Sentiment) | Token-free local scoring vs. licensed Marketaux |
@@ -60,7 +64,7 @@ asks them all, compares, and tells the agent what it is holding.
 
 ## The `data_provider` contract
 
-Every tool result carries exactly one of five values. It states **coverage**, never agreement:
+Every tool result carries exactly one of six values. It states **coverage**, never agreement:
 
 | Value | Meaning |
 | --- | --- |
@@ -68,6 +72,7 @@ Every tool result carries exactly one of five values. It states **coverage**, ne
 | `TRADINGVIEW` | Only TradingView answered. Served, but **not** corroborated. |
 | `FINVIZ` | Only Finviz answered. Served, but **not** corroborated. |
 | `YAHOO` | Only Yahoo Finance answered. Served, but **not** corroborated. |
+| `BLOOMBERG` | Only Bloomberg answered. Single-source by design, never cross-checked. |
 | `NONE` | No provider could supply it. No value is presented. |
 
 ```jsonc
@@ -124,10 +129,31 @@ Full detail: [Response Contract](Response-Contract).
 
 ---
 
+## Bloomberg: single-source by design
+
+Bloomberg has its own `data_provider` label but is **not** in `PROVIDER_ORDER`, so it cannot
+contribute to `ALL` and never appears in `comparisons`. Three measurements made that decision:
+
+- its equity pages are delayed (`exchangeDelay` reads `15 Minutes`);
+- its static fields are penny-identical to Yahoo's, so it is not an independent reading of them;
+- `lastUpdate` is a session sentinel, not a print time (`2026-11-05T01:00:00.000Z` on a page whose
+  real print was `2026-11-04T20:58:00Z`), so trusting it would let a stale page beat a live print.
+
+`bloomberg_quote` takes `print_time` from the last intraday point and says why when that point does
+not match the quoted price. `bloomberg_markets` serves the board where Bloomberg is the only source
+here of the government benchmark yield curve, and states that the board carries no per-instrument
+print time. Both return `cross_checked: false` and `reconciliation_leg: false`.
+
+Access needs `curl_cffi`: bloomberg.com gates plain HTTP clients on the TLS fingerprint, so `httpx`
+gets a 403 robot page. That is also why the health monitor does not probe this provider; the tool
+response is the availability signal. Details: [Design Decisions](Design-Decisions).
+
+---
+
 ## Symbols are resolved per provider
 
-`XAUUSD` is `OANDA:XAUUSD` on TradingView, `^GSPC`-style aliasing for indices, a suffix for Yahoo FX
-and simply not carried by Finviz. [`symbols.py`](https://github.com/giraygokirmak/tapebasis/blob/main/src/tapebasis/symbols.py)
+`XAUUSD` is `OANDA:XAUUSD` on TradingView, `^GSPC`-style aliasing for indices, a suffix for Yahoo FX,
+`XAUUSD:CUR` on Bloomberg and simply not carried by Finviz. [`symbols.py`](https://github.com/giraygokirmak/tapebasis/blob/main/src/tapebasis/symbols.py)
 resolves each query per provider, caches the result for an hour, and records the derivation in
 `resolutions`. A ticker is only returned if the provider can actually quote it, and a missing
 instrument becomes `NOT_ATTEMPTED`: a structural fact, not an error.
@@ -177,8 +203,9 @@ Details: [Getting Started](Getting-Started) · [Docker](Docker).
 ## Note on labelling
 
 Every provider is asked for its own data: TradingView from `scanner.tradingview.com` and its chart
-websocket, Finviz from `finviz.com` HTML and JSON islands, Yahoo from `query1.finance.yahoo.com`.
-Nothing is proxied through another provider, and `sources` records the upstream each leg used.
+websocket, Finviz from `finviz.com` HTML and JSON islands, Yahoo from `query1.finance.yahoo.com`,
+Bloomberg from `bloomberg.com` quote pages and its market board. Nothing is proxied through another
+provider, and `sources` records the upstream each leg used.
 
 Where a capability exists on only some providers, that is stated, not simulated: options chains come
 from Finviz and Yahoo (TradingView contributes only the underlying price), backtests run twice on

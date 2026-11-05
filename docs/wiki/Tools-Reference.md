@@ -1,6 +1,6 @@
 # Tools Reference
 
-33 tools. `providers` is the tool's **possible** provider set, not a promise about any single call:
+35 tools. `providers` is the tool's **possible** provider set, not a promise about any single call:
 an individual response can degrade to fewer providers if some fail. The per-call truth is always that
 response's `data_provider` plus its `providers_answered`.
 
@@ -221,6 +221,45 @@ Yahoo. It is the scan/analysis endpoints that are TradingView-only.
 
 ---
 
+## Bloomberg-only (2)
+
+Served, labelled `BLOOMBERG`, explicitly single-source. Bloomberg is **not** in `PROVIDER_ORDER`, so
+it never contributes to `ALL` and never appears in `comparisons`: its equity quotes are delayed, its
+static fields duplicate Yahoo's, and its page timestamp is a session sentinel. Both tools return
+`cross_checked: false` and `reconciliation_leg: false`.
+
+| Tool | Capability | Notes |
+| --- | --- | --- |
+| `bloomberg_quote` | Bloomberg's own quote page for one instrument | `print_time` from the last intraday point, never `lastUpdate`; `exchange_delay` states the delay |
+| `bloomberg_markets` | Index levels, government benchmark yields, commodities, FX | The only source here of a government yield curve; the board has no per-instrument print time, so nothing is aged or ordered |
+
+### `bloomberg_quote`
+
+For a corroborated price use `stock_quote`. Use this when the caller wants Bloomberg's reading
+specifically, or a figure only Bloomberg publishes.
+
+| | |
+| --- | --- |
+| Providers | `bloomberg.com/quote/<id>` HTML, `__NEXT_DATA__` payload |
+| Compared | nothing: single-source by design |
+| Delay | `exchangeDelay` (15 Minutes on equities), echoed as `exchange_delay` / `is_exchange_delayed` |
+| Print time | `priceMovements1Day[-1].dateTime`, and only when that point's value matches the quoted price |
+| Never used | `lastUpdate`, a session sentinel (`...T01:00:00Z`) that is later than the real print |
+
+`print_time: null` with `print_time_missing_reason` is the honest answer when the intraday series
+ends somewhere other than the quoted price: a timestamp describing a different number is not a print
+time. Symbols resolve through a curated alias table (`SPX` to `SPX:IND`, `EURUSD` to `EURUSD:CUR`,
+`BRK.B` to `BRK/B:US`), because Bloomberg answers a bad id with a 403 bot page rather than a 404.
+
+### `bloomberg_markets`
+
+The board carries 20 rows on one page: index levels, ten government benchmark yields, crude, gold and
+FX. The yield curve is the capability no other provider here publishes. There is no per-instrument
+print time on the board, so the response says so and no reading is aged or ordered. Treat every level
+as a snapshot, not a live tape.
+
+---
+
 ## Ops (2)
 
 | Tool | Purpose |
@@ -243,6 +282,8 @@ Yahoo. It is the scan/analysis endpoints that are TradingView-only.
 | How the market feels | `market_sentiment` | No (single-source by nature) |
 | Options positioning | `stock_options_chain` | On volume/OI |
 | Filings, ownership, peers | `stock_filings`, `stock_ownership`, `stock_peers` | No |
+| Government bond yields | `bloomberg_markets` | No, Bloomberg-only |
+| Bloomberg's own quote reading | `bloomberg_quote` | No, and delay-labelled |
 | Crypto / futures scans | `crypto_*`, `futures_*` | No |
 | Strategy validation | `stock_backtest`, `stock_backtest_compare` | Yes, two OHLCV feeds |
 | Everything about one stock | `combined_analysis` | Price leg only |

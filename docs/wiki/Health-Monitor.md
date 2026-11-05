@@ -8,6 +8,9 @@ A provider that catches its own exception looks healthy from the outside. So the
 upstream **independently of the provider code paths**: it can fail even when every tool call
 succeeds, and that failure is the signal.
 
+The probe set covers the providers that participate in reconciliation (TradingView, Finviz, Yahoo).
+Bloomberg is served single-source and is not probed, see below.
+
 ## Probes
 
 | Probe | Provider | Asserts |
@@ -20,6 +23,16 @@ succeeds, and that failure is the signal.
 | `yahoo.chart_api` | YAHOO | `chart.result[0].meta` and `chart.result[0].timestamp` present for an equity |
 | `yahoo.chart_fx` | YAHOO | the FX resolution path still answers (`EURUSD=X`) |
 | `yahoo.chart_crypto` | YAHOO | the crypto resolution path still answers (`BTC-USD`) |
+
+Bloomberg has **no probe**, deliberately. Its site gates plain HTTP clients on the TLS fingerprint:
+`httpx` receives a 403 robot page whatever headers it sends, while `curl_cffi` with a specific
+impersonation version gets 200. A probe built on `httpx` would therefore report `DOWN` on a perfectly
+healthy provider. The same asymmetry blocks a meaningful probe on the `curl_cffi` path, because the
+monitor's contracts are HTTP-level ones. Instead, `bloomberg_quote` / `bloomberg_markets` report the
+failure they actually hit (`UPSTREAM_BLOCKED`, `SCHEMA_DRIFT`, `NOT_CONFIGURED` when `curl_cffi` is
+missing), and the tool response is the availability signal. Bloomberg is also absent from
+`providers_answered` in `tapebasis_tool_map` for the same reason it is absent from `PROVIDER_ORDER`:
+it is not a reconciliation leg.
 
 The two extra Yahoo probes exist because the FX and crypto ticker conventions are separate
 assumptions. A probe that only checked `AAPL` would keep reporting `OK` while `EURUSD=X` silently
@@ -114,14 +127,21 @@ Returns per-probe status, message, fingerprint, and whether the result matches t
     "TRADINGVIEW": { "min_interval_s": 0.5, "max_inflight": 2, "cooling_down_s": 0.0,
                      "block_streak": 0, "cached_entries": 12 },
     "YAHOO": { "min_interval_s": 1.0, "max_inflight": 1, "cooling_down_s": 4.7,
-               "block_streak": 1, "cached_entries": 3 }
+               "block_streak": 1, "cached_entries": 3 },
+    "BLOOMBERG": { "min_interval_s": 10.0, "max_inflight": 1, "cooling_down_s": 0.0,
+                   "block_streak": 0, "cached_entries": 1 }
   }
 }
 ```
 
-A positive `cooling_down_s` means a provider is in its post-`429` pause right now; that is usually
-the explanation for a response that suddenly went single-source. Use `refresh=True` when you suspect
-drift but the cache has not rolled over.
+`BLOOMBERG` appears under `rate_limits` but not under `providers`: it is paced like any other
+upstream, and it is not probed. A positive `cooling_down_s` there means the bot wall answered 403 and
+the provider paused itself, which is the explanation for a `bloomberg_*` response that came back
+`NONE` with `UPSTREAM_BLOCKED`.
+
+A positive `cooling_down_s` means a provider is paused right now: after a `429`, or after the
+Bloomberg bot wall answered 403. That is usually the explanation for a response that suddenly went
+single-source. Use `refresh=True` when you suspect drift but the cache has not rolled over.
 
 ## Probe health vs. request health
 
@@ -133,6 +153,7 @@ particular request rate-limited". Those are separate diagnostics:
 | A provider silently stopped contributing | `errors` (codes) + `rate_limits` (`cooling_down_s`) |
 | A provider answers but fields are missing | probe `DRIFT` for that provider |
 | Everything is `NONE` | DNS/network first, then `tapebasis_health(refresh=True)` |
+| `bloomberg_*` returns `NONE` / `UPSTREAM_BLOCKED` | there is no probe: check the next `bloomberg_*` call, and `rate_limits.BLOOMBERG.cooling_down_s` |
 
 ## Resetting a baseline
 

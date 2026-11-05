@@ -6,8 +6,10 @@ Run over stdio (default) or streamable HTTP::
     tapebasis streamable-http --host 0.0.0.0 --port 8000
 
 Every tool response carries ``data_provider`` ∈ ``ALL`` / ``TRADINGVIEW`` /
-``FINVIZ`` / ``YAHOO`` / ``NONE``, and any upstream schema drift detected by the
-health monitor is reported inside the same response.
+``FINVIZ`` / ``YAHOO`` / ``BLOOMBERG`` / ``NONE``, and any upstream schema drift
+detected by the health monitor is reported inside the same response. Bloomberg
+is single-source only: it is outside the reconciliation set and never
+contributes to ``ALL``.
 """
 from __future__ import annotations
 
@@ -26,14 +28,19 @@ logger = logging.getLogger("tapebasis")
 
 INSTRUCTIONS = (
     "Market data from multiple independent providers (currently TradingView, "
-    "Finviz and Yahoo Finance), each fetched natively. Every tool result includes "
-    "`data_provider`, one of ALL, TRADINGVIEW, FINVIZ, YAHOO or NONE.\n\n"
+    "Finviz, Yahoo Finance, plus Bloomberg as an explicitly single-source "
+    "provider), each fetched natively. Every tool result includes "
+    "`data_provider`, one of ALL, TRADINGVIEW, FINVIZ, YAHOO, BLOOMBERG or NONE.\n\n"
     "HOW TO READ IT:\n"
     "- ALL: every provider that was asked answered. This is COVERAGE, not agreement. "
     "Check `comparisons` for whether the readings match, and `providers_answered` for "
     "exactly which providers contributed.\n"
     "- TRADINGVIEW, FINVIZ or YAHOO: only that provider had the data. You MUST tell the "
     "user this figure is single-source and not cross-verified.\n"
+    "- BLOOMBERG: a Bloomberg-only tool answered. It is never cross-checked and never "
+    "counted as an independent leg, and its equity quotes are delayed, so say it is "
+    "single-source and check `exchange_delay` / `print_time` before calling a price "
+    "live.\n"
     "- NONE: no data; do not present a value.\n\n"
     "Only one value is ever returned per field (the newest market print). Every "
     "provider's raw reading stays in `comparisons`, and disagreements are named in "
@@ -54,7 +61,7 @@ INSTRUCTIONS = (
     "stock_filings, stock_ownership, stock_peers, stock_why_moving, stock_chart, "
     "stock_dilution, stock_screener_filters, crypto_*, futures_*, stock_backtest*, "
     "market_snapshot, market_sentiment, egx_market_overview, combined_analysis, "
-    "tapebasis_health, tapebasis_tool_map."
+    "bloomberg_quote, bloomberg_markets, tapebasis_health, tapebasis_tool_map."
 )
 
 
@@ -75,7 +82,7 @@ async def lifespan(_server: FastMCP):
 
 
 mcp = FastMCP(
-    name="Tapebasis, TradingView + Finviz + Yahoo",
+    name="Tapebasis, TradingView + Finviz + Yahoo (+ Bloomberg single-source)",
     instructions=INSTRUCTIONS,
     lifespan=lifespan,
 )
@@ -83,12 +90,19 @@ mcp = FastMCP(
 
 def _register_all() -> dict[str, int]:
     """Attach every tool family to the server."""
-    from . import tools_finviz, tools_health, tools_market, tools_tradingview
+    from . import (
+        tools_bloomberg,
+        tools_finviz,
+        tools_health,
+        tools_market,
+        tools_tradingview,
+    )
 
     counts = {
         "market": tools_market.register(mcp),
         "finviz": tools_finviz.register(mcp),
         "tradingview": tools_tradingview.register(mcp),
+        "bloomberg": tools_bloomberg.register(mcp),
         "health": tools_health.register(mcp),
     }
     return counts

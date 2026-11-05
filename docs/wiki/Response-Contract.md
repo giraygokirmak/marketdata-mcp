@@ -2,7 +2,7 @@
 
 Every tool returns the same envelope. Learn it once and every tool is readable.
 
-## The five provider states
+## The six provider states
 
 | `data_provider` | `verification` | Meaning | What an agent should do |
 | --- | --- | --- | --- |
@@ -10,6 +10,7 @@ Every tool returns the same envelope. Learn it once and every tool is readable.
 | `TRADINGVIEW` | `SINGLE_SOURCE` | Only TradingView answered | Quote, but say it is single-source and not corroborated |
 | `FINVIZ` | `SINGLE_SOURCE` | Only Finviz answered | Same, from the Finviz side |
 | `YAHOO` | `SINGLE_SOURCE` | Only Yahoo Finance answered | Same, from the Yahoo side |
+| `BLOOMBERG` | `SINGLE_SOURCE` | Only Bloomberg answered | Same, and say it is single-source by design, never cross-checked; state `exchange_delay` before calling a price live |
 | `NONE` | `UNAVAILABLE` | No provider answered | Say no data is available. Do not invent one. |
 
 `verification` is derived, never independent: `ALL → MULTI_SOURCE`, a single provider
@@ -24,11 +25,17 @@ serve the field. If TradingView and Yahoo answer and Finviz has no page for the 
 response is `ALL`: every provider *asked* answered. `providers_answered` lists exactly which ones
 contributed, so coverage can be read precisely.
 
+**`ALL` also never includes Bloomberg.** Bloomberg is a provider label outside `PROVIDER_ORDER`: the
+`bloomberg_*` tools return `BLOOMBERG` / `SINGLE_SOURCE` and add `cross_checked: false` and
+`reconciliation_leg: false`. Its equity quotes are delayed and its statics duplicate Yahoo's, so a
+fourth "leg" would inflate the coverage claim instead of strengthening it. `ALL` therefore continues
+to mean the reconcilable providers answered, and no response can mix Bloomberg into a comparison.
+
 ## Fields
 
 ### `data_provider`
-`"ALL" | "TRADINGVIEW" | "FINVIZ" | "YAHOO" | "NONE"`. The single most important field in the
-response.
+`"ALL" | "TRADINGVIEW" | "FINVIZ" | "YAHOO" | "BLOOMBERG" | "NONE"`. The single most important field
+in the response.
 
 ### `verification`
 `"MULTI_SOURCE" | "SINGLE_SOURCE" | "UNAVAILABLE"`. Convenience mirror of the table above.
@@ -174,13 +181,19 @@ This is the field to read when a symbol behaved unexpectedly. `XAUUSD` shows
 `OANDA:XAUUSD` for TradingView, no Yahoo ticker (Yahoo has no spot-gold pair, `XAUUSD=X` is a 404)
 and a Finviz note saying it carries US equities only.
 
+### `cross_checked` / `reconciliation_leg`
+Present on the `bloomberg_*` tools, both `false`: the payload is single-source and Bloomberg is
+outside the reconciliation set. They are absent from every reconciled response, because there the
+answer is implied by `data_provider` and `comparisons`.
+
 ### `sources`
 Where each provider's data actually came from: upstream URL or dataset name.
 
 ```jsonc
 { "TRADINGVIEW": "scanner.tradingview.com",
   "FINVIZ": "https://finviz.com/stock?t=AAPL",
-  "YAHOO": "query1.finance.yahoo.com chart API" }
+  "YAHOO": "query1.finance.yahoo.com chart API",
+  "BLOOMBERG": "https://www.bloomberg.com/quote/AAPL:US" }   // bloomberg_* only
 ```
 
 This is the honesty field. Each label names the upstream that was actually called, no leg proxies

@@ -25,8 +25,8 @@ See [Health Monitor](Health-Monitor).
 ## Rate limiting (every provider)
 
 Every upstream is undocumented and rate-limited by its owner, so **every** request (TradingView
-scanner, TradingView chart websocket, Finviz HTML/JSON, Yahoo chart API) passes through a
-per-provider limiter ([`ratelimit.py`](https://github.com/giraygokirmak/tapebasis/blob/main/src/tapebasis/ratelimit.py)).
+scanner, TradingView chart websocket, Finviz HTML/JSON, Yahoo chart API, Bloomberg quote pages) passes
+through a per-provider limiter ([`ratelimit.py`](https://github.com/giraygokirmak/tapebasis/blob/main/src/tapebasis/ratelimit.py)).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -39,6 +39,12 @@ per-provider limiter ([`ratelimit.py`](https://github.com/giraygokirmak/tapebasi
 | `TAPEBASIS_YAHOO_MIN_INTERVAL` | `1.0` | Minimum seconds between Yahoo request starts |
 | `TAPEBASIS_YAHOO_MAX_INFLIGHT` | `1` | Max concurrent Yahoo requests |
 | `TAPEBASIS_YAHOO_MAX_RETRIES` | `2` | Retries per Yahoo request |
+| `TAPEBASIS_BLOOMBERG_MIN_INTERVAL` | `10.0` | Minimum seconds between Bloomberg request starts |
+| `TAPEBASIS_BLOOMBERG_MAX_INFLIGHT` | `1` | Max concurrent Bloomberg requests |
+| `TAPEBASIS_BLOOMBERG_MAX_RETRIES` | `1` | Retries per Bloomberg request |
+| `TAPEBASIS_BLOOMBERG_IMPERSONATE` | `chrome124` | Browser fingerprint `curl_cffi` presents; `chrome` and `chrome131` are refused |
+| `TAPEBASIS_BLOOMBERG_TIMEOUT` | `30` | bloomberg.com HTTP timeout (s) |
+| `TAPEBASIS_BLOOMBERG_CACHE_TTL` | `60` | Bloomberg page cache lifetime (s) |
 
 Some behaviours are not configurable, because they are safety properties rather than tuning knobs:
 
@@ -50,8 +56,10 @@ Some behaviours are not configurable, because they are safety properties rather 
 - **A per-process gate.** Limiter state is process-local; running several containers multiplies the
   effective request rate.
 
-Yahoo is paced slowest (`1.0 s`, one at a time) because it starts answering `429` after a short burst
-and stays angry for a while. Raising concurrency or lowering the interval increases throughput at the
+Yahoo is paced slowly (`1.0 s`, one at a time) because it starts answering `429` after a short burst
+and stays angry for a while. Bloomberg is paced slowest of all (`10 s`, one at a time): its HTML path
+tolerated five requests 10 s apart, while its separate API bucket burned after about ten rapid calls
+and stayed 403 for minutes. Raising concurrency or lowering an interval increases throughput at the
 cost of a block that outlasts the burst.
 
 Current limiter state (`min_interval_s`, `max_inflight`, `cooling_down_s`, `block_streak`,
@@ -127,6 +135,8 @@ TAPEBASIS_FINVIZ_MIN_INTERVAL=0.35
 TAPEBASIS_FINVIZ_MAX_INFLIGHT=2
 TAPEBASIS_YAHOO_MIN_INTERVAL=1.0
 TAPEBASIS_YAHOO_MAX_INFLIGHT=1
+TAPEBASIS_BLOOMBERG_MIN_INTERVAL=10.0
+TAPEBASIS_BLOOMBERG_MAX_INFLIGHT=1
 
 # Optional: licensed news + sentiment
 # MARKETAUX_API_TOKEN=

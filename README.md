@@ -4,7 +4,8 @@
 
 **Multiple tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
 market data together, cross-checks every overlapping figure, and labels each response with the
-provider that actually produced it.
+provider that actually produced it. **Bloomberg** is served too, as an explicitly single-source
+provider for the data nobody else here carries.
 
 </div>
 
@@ -24,6 +25,12 @@ Each provider is genuinely independent: TradingView's own scanner and chart webs
 and JSON islands, Yahoo's chart API. No leg proxies another: a provider that quietly forwards a
 competitor's numbers is worthless as a cross-check.
 
+Bloomberg is the deliberate exception to "more providers is better". Its equity quotes are delayed,
+its static fields duplicate Yahoo's, and its page timestamp is a session sentinel, so counting it as
+a fourth independent leg would inflate `MULTI_SOURCE` rather than support it. It is therefore served
+[as single-source only](#bloomberg-only-served-labelled-bloomberg-never-a-fourth-leg), for the government
+benchmark yield curve and its own quote pages, and it never contributes to `ALL`.
+
 [![Tests](https://github.com/giraygokirmak/tapebasis/actions/workflows/test.yml/badge.svg)](https://github.com/giraygokirmak/tapebasis/actions/workflows/test.yml)
 [![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-3776ab)](https://github.com/giraygokirmak/tapebasis)
 [![License: MIT](https://img.shields.io/badge/license-MIT-5eead4)](LICENSE)
@@ -32,7 +39,7 @@ competitor's numbers is worthless as a cross-check.
 
 ## The `data_provider` contract
 
-Every tool result carries exactly one of five values. It states **coverage**, never agreement:
+Every tool result carries exactly one of six values. It states **coverage**, never agreement:
 
 | Value         | Meaning                                                                    |
 | ------------- | -------------------------------------------------------------------------- |
@@ -40,6 +47,7 @@ Every tool result carries exactly one of five values. It states **coverage**, ne
 | `TRADINGVIEW` | Only TradingView answered. Served, but **not** corroborated.               |
 | `FINVIZ`      | Only Finviz answered. Served, but **not** corroborated.                    |
 | `YAHOO`       | Only Yahoo Finance answered. Served, but **not** corroborated.             |
+| `BLOOMBERG`   | Only Bloomberg answered. Single-source by design, never cross-checked.     |
 | `NONE`        | No provider could supply it. No value is presented.                        |
 
 `ALL` means "every provider asked answered", not "they agree". Agreement is a separate axis, and it
@@ -140,7 +148,7 @@ response is `TRADINGVIEW` / `SINGLE_SOURCE`, served and clearly labelled, not hi
 
 ---
 
-## Tools (33)
+## Tools (35)
 
 ### Multi-source, every capable provider asked, answers compared
 
@@ -184,6 +192,27 @@ and the notice states the data is not cross-checked.
 
 `market_sentiment` is single-source too, but which source depends on the environment, see
 [Sentiment](#sentiment-no-api-key-required).
+
+### Bloomberg-only, served, labelled `BLOOMBERG`, never a fourth leg
+
+`bloomberg_quote` · `bloomberg_markets`
+
+Bloomberg is a provider with its own label, but it is **outside the reconciliation set**: it is not in
+`PROVIDER_ORDER`, so it cannot contribute to `ALL` and never appears in `comparisons`. The reason is
+measured, not stylistic:
+
+- equity quotes there are delayed (`exchangeDelay` reads `15 Minutes`), so they cannot arbitrate a
+  live print;
+- its static fields are penny-identical to Yahoo's, so it is not an independent reading of them;
+- `lastUpdate` is a session sentinel (`2026-11-05T01:00:00.000Z` on a page whose print was
+  `2026-11-04T20:58:00Z`), so using it as a print time would make a stale page win a freshness
+  comparison. `bloomberg_quote` therefore takes `print_time` from the last intraday point and
+  reports `print_time_missing_reason` when that point does not match the quoted price.
+
+What it adds is the government benchmark yield curve plus index, commodity and FX levels on one
+board, which no other provider here publishes. `bloomberg_markets` says plainly that the board carries
+no per-instrument print time, so nothing there is aged or ordered. Both tools return
+`cross_checked: false` and `reconciliation_leg: false`.
 
 ### Ops
 
@@ -379,6 +408,12 @@ Everything is optional. See [`.env.example`](.env.example) for the full list.
 | `TAPEBASIS_FINVIZ_MAX_INFLIGHT` | `2` | Finviz concurrent requests |
 | `TAPEBASIS_YAHOO_MIN_INTERVAL` | `1.0` | Yahoo request spacing (s) |
 | `TAPEBASIS_YAHOO_MAX_INFLIGHT` | `1` | Yahoo concurrent requests |
+| `TAPEBASIS_BLOOMBERG_MIN_INTERVAL` | `10.0` | Bloomberg request spacing (s); the strictest limiter here |
+| `TAPEBASIS_BLOOMBERG_MAX_INFLIGHT` | `1` | Bloomberg concurrent requests |
+| `TAPEBASIS_BLOOMBERG_MAX_RETRIES` | `1` | Retries per Bloomberg request |
+| `TAPEBASIS_BLOOMBERG_IMPERSONATE` | `chrome124` | Browser fingerprint `curl_cffi` presents to bloomberg.com |
+| `TAPEBASIS_BLOOMBERG_TIMEOUT` | `30` | bloomberg.com HTTP timeout (s) |
+| `TAPEBASIS_BLOOMBERG_CACHE_TTL` | `60` | Bloomberg page cache lifetime (s) |
 | `TAPEBASIS_TV_MAX_RETRIES`, `TAPEBASIS_FINVIZ_MAX_RETRIES`, `TAPEBASIS_YAHOO_MAX_RETRIES` | `2` | Retries per provider request (the shared cooldown is not tunable) |
 | `MARKETAUX_API_TOKEN` | - | Optional. Enables licensed Marketaux news + entity sentiment |
 | `MARKETAUX_DAILY_BUDGET` | `90` | Marketaux request cap per day (free plan is 100) |
@@ -396,6 +431,8 @@ No proxy configuration exists: every provider reaches its upstream directly.
    TRADINGVIEW -> quote them, but say the figure is single-source and not corroborated.
    FINVIZ      -> same, from the Finviz side.
    YAHOO       -> same, from the Yahoo side.
+   BLOOMBERG   -> same: single-source by design, never cross-checked. Quote
+                  exchange_delay / print_time before calling a price live.
    NONE        -> say no data is available. Do not invent one.
 
 2. Check degraded / warnings.
@@ -419,7 +456,7 @@ No proxy configuration exists: every provider reaches its upstream directly.
 
 ```bash
 pip install -e ".[dev]"     # or, with uv: uv venv && uv pip install -e ".[dev]"
-pytest                      # 182 hermetic tests, no network
+pytest                      # 222 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 ```
 
@@ -443,10 +480,12 @@ src/tapebasis/
 ├── tv_access.py          typed access to TradingView's own data
 ├── fv_access.py          typed access to the Finviz provider
 ├── yh_access.py          typed access to the Yahoo Finance provider
+├── bb_access.py          typed access to bloomberg.com (single-source)
 ├── catalog.py            plain-data tool catalogue (providers + comparison strategy)
 ├── tools_market.py       multi-source market tools
 ├── tools_finviz.py       Finviz-only tools
 ├── tools_tradingview.py  TradingView-only tools + combined_analysis
+├── tools_bloomberg.py    Bloomberg-only tools (single-source)
 ├── tools_health.py       health + tool map
 └── providers/            provider implementations (TradingView, Finviz)
 ```
@@ -455,8 +494,10 @@ src/tapebasis/
 
 Every provider is asked for its own data. TradingView quotes come from
 `scanner.tradingview.com` and its chart websocket; Finviz from `finviz.com` HTML and JSON islands;
-Yahoo from `query1.finance.yahoo.com`. Nothing is proxied through another provider, and `sources`
-records the upstream each leg actually used.
+Yahoo from `query1.finance.yahoo.com`; Bloomberg from `bloomberg.com/quote/...` and its market
+board, fetched with `curl_cffi` because the site gates plain HTTP clients on the TLS fingerprint.
+Nothing is proxied through another provider, and `sources` records the upstream each leg actually
+used.
 
 Where a capability exists on only some providers, that is stated rather than simulated: options
 chains come from Finviz and Yahoo (TradingView contributes only the underlying price), backtests run

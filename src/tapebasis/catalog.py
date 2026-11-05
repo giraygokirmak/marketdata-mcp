@@ -185,6 +185,34 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "comparison": "single-source",
         "notes": "Finviz's proprietary filter vocabulary; TradingView uses different column names.",
     },
+    # ── Bloomberg: served, labelled BLOOMBERG, never a reconciliation leg ────
+    {
+        "name": "bloomberg_quote",
+        "capability": "Bloomberg's own quote page for one instrument",
+        "providers": "BLOOMBERG",
+        "comparison": "single-source, never cross-checked",
+        "notes": (
+            "Bloomberg is outside the reconciliation set, so it never contributes to "
+            "`ALL` and never enters `comparisons`. Its equity quotes are delayed "
+            "(`exchangeDelay` is 15 Minutes), its static fields duplicate Yahoo's, and "
+            "its `lastUpdate` is a session sentinel: `print_time` therefore comes from "
+            "the last intraday point, and is null when that point does not match the "
+            "quoted price. Use `stock_quote` for a corroborated price; use this when "
+            "the caller wants Bloomberg's reading specifically."
+        ),
+    },
+    {
+        "name": "bloomberg_markets",
+        "capability": "Bloomberg market board: index levels, government benchmark yields, commodities, FX",
+        "providers": "BLOOMBERG",
+        "comparison": "single-source, never cross-checked",
+        "notes": (
+            "The government benchmark yield curve is the capability no other provider "
+            "here publishes; index, commodity and FX levels ride along as context. The "
+            "board carries no per-instrument print time, so no reading is aged or "
+            "ordered and the response says so."
+        ),
+    },
     # ── TradingView-only: served, labelled TRADINGVIEW, single-source ────────
     {
         "name": "stock_backtest",

@@ -24,6 +24,9 @@
       │                                              └──► data.tradingview.com (ws)
       ├──► fv_access ──► providers/finviz ─────────────► finviz.com (HTML + /api/*)
       └──► yh_access ──► Yahoo chart API ──────────────► query1.finance.yahoo.com
+
+  (separately, never reconciled)
+  tools_bloomberg ──► bb_access ──► curl_cffi (TLS impersonation) ──► bloomberg.com
       │
       │  every request above goes through ratelimit.limiter(PROVIDER)
       ▼
@@ -58,10 +61,12 @@ src/tapebasis/
 ├── tv_access.py          typed access to TradingView's own data
 ├── fv_access.py          typed access to the Finviz provider
 ├── yh_access.py          typed access to the Yahoo Finance provider
+├── bb_access.py          typed access to bloomberg.com (single-source, curl_cffi)
 ├── catalog.py            plain-data tool catalogue (providers + comparison strategy)
 ├── tools_market.py       the 9 multi-source market tools
 ├── tools_finviz.py       the 7 Finviz-only tools
 ├── tools_tradingview.py  TradingView-only tools + combined_analysis
+├── tools_bloomberg.py    the 2 Bloomberg-only tools (single-source)
 ├── tools_health.py       tapebasis_health + tapebasis_tool_map
 └── providers/
     ├── tradingview/      provider layer (scanner, chart ws, TA, backtest, …)
@@ -81,6 +86,7 @@ access module and its own upstream:
 | TradingView | `tv_access.py` → `providers/tradingview/native.py` | `scanner.tradingview.com` (quotes, screener), `data.tradingview.com` (chart websocket for OHLCV) |
 | Finviz | `fv_access.py` | `finviz.com` HTML pages and `/api/*` JSON islands |
 | Yahoo Finance | `yh_access.py` | `query1.finance.yahoo.com/v8/finance/chart` |
+| Bloomberg (single-source) | `bb_access.py` | `bloomberg.com/quote/<id>` and `/markets/rates-bonds`, through `curl_cffi` |
 
 An earlier version of this server had TradingView's price come from Yahoo's chart API. That made the
 two legs the same upstream wearing different labels: a comparison that could only ever agree. The
@@ -101,6 +107,16 @@ is the only code that defines the tool contract; it never reaches into provider 
 Provider code does not import anything from the orchestration layer. That one-way dependency is what
 keeps the boundary real rather than decorative. It is why the token-free sentiment fallback lives in
 `tools_tradingview.py` and not inside `marketaux_service.py`.
+
+### Bloomberg is an adapter outside the reconciliation path
+
+`bb_access.py` sits beside the three reconciliation adapters but is deliberately not one of them: it
+is never passed to `reconcile.ask`, its label is absent from `PROVIDER_ORDER`, and no comparison row
+can contain it. Making it a fourth leg would not add an independent reading (its statics duplicate
+Yahoo's, its equity quotes are delayed), and its `lastUpdate` is a session sentinel that would win a
+freshness arbitration it should lose. The adapter is also the only one that needs `curl_cffi`: the
+site gates plain HTTP clients on the TLS fingerprint, so it cannot share the `httpx` path the others
+use. See [Design Decisions](Design-Decisions) 30.
 
 ### `tv_access.py` / `fv_access.py` / `yh_access.py` are adapters, not wrappers
 

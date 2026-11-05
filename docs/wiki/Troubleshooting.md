@@ -4,7 +4,7 @@ Symptom → cause → fix.
 
 ---
 
-## `data_provider` is `TRADINGVIEW`, `FINVIZ` or `YAHOO`, not `ALL`
+## `data_provider` is `TRADINGVIEW`, `FINVIZ`, `YAHOO` or `BLOOMBERG`, not `ALL`
 
 **Cause:** at least one provider failed or timed out for this call, so coverage is incomplete.
 
@@ -20,7 +20,8 @@ Symptom → cause → fix.
 | `NOT_CONFIGURED` | Feature needs a token | Add `MARKETAUX_API_TOKEN`, or ignore: the data is still served |
 
 A single-source response is **not** a failure. The data is served and labelled; the notice says it is
-not corroborated.
+not corroborated. `BLOOMBERG` is not even a candidate for `ALL`: the `bloomberg_*` tools are
+single-source by design (see [below](#bloomberg-returns-none-or-upstream_blocked)).
 
 **Also check `providers_answered`.** `ALL` means every provider that was asked answered, which can be
 only some of them. If a provider is missing from that list and there is no matching `errors` entry,
@@ -97,6 +98,36 @@ within 15 minutes of each other.
 
 On FX this is permanent, not a timing accident: spot FX has no single official previous close, so
 `change_percent` is never compared there. The reading from every provider is still reported.
+
+---
+
+## `bloomberg_quote` returns a price that differs from `stock_quote`
+
+**Expected.** Bloomberg's equity pages are delayed (`exchangeDelay` is `15 Minutes`), so its print is
+older by design. Trust `stock_quote` for the current price: it arbitrates three live-capable providers
+by print time. Bloomberg's number is a separate, explicitly delayed reading.
+
+Read `exchange_delay` and `print_time` in the `bloomberg_quote` payload before quoting it. If
+`print_time` is null, the intraday series did not end at the quoted price and the response says so in
+`print_time_missing_reason`; that is deliberate, because a timestamp describing a different number is
+not a print time.
+
+---
+
+## `bloomberg_*` returns `NONE` or `UPSTREAM_BLOCKED`
+
+**Cause:** bloomberg.com answered 403.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `UPSTREAM_BLOCKED` | The anti-bot wall, usually after a burst | Wait; the provider pauses itself (`rate_limits.BLOOMBERG.cooling_down_s`) |
+| `NOT_CONFIGURED` | `curl_cffi` is not installed | `pip install curl_cffi`; the site rejects plain HTTP clients on the TLS fingerprint |
+| `SCHEMA_DRIFT` | The page no longer carries `__NEXT_DATA__` | Treat like any other upstream drift |
+| `NO_DATA` | Bloomberg has no quote for that id | Check the id spelling (`AAPL:US`, `SPX:IND`, `EURUSD:CUR`) |
+
+Bloomberg is deliberately not probed by the health monitor: an `httpx` probe gets a 403 robot page
+from a healthy provider, so it would report a false outage. The tool response itself is the
+availability signal, and `rate_limits.BLOOMBERG` shows whether it is cooling down.
 
 ---
 

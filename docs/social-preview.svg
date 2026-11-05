@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-labelledby="ogTitle ogDesc">
   <title id="ogTitle">Tapebasis, cross-checked market data for AI agents</title>
-  <desc id="ogDesc">TradingView, Finviz and Yahoo Finance served together, every overlapping figure cross-checked and labelled ALL, TRADINGVIEW, FINVIZ, YAHOO or NONE.</desc>
+  <desc id="ogDesc">TradingView, Finviz and Yahoo Finance served together, every overlapping figure cross-checked and labelled ALL, TRADINGVIEW, FINVIZ, YAHOO or NONE, with Bloomberg served single-source.</desc>
 
   <defs>
     <linearGradient id="ogBg" x1="0" y1="0" x2="1" y2="1">
@@ -94,8 +94,14 @@
 
     <rect x="1104" y="466" width="92" height="42" rx="21" fill="#1a1f2b" stroke="#64748b" stroke-opacity="0.5"/>
     <text x="1150" y="493" fill="#94a3b8" text-anchor="middle">NONE</text>
+
+    <rect x="602" y="518" width="158" height="42" rx="21" fill="#241a12" stroke="#fb923c" stroke-opacity="0.45"/>
+    <text x="681" y="545" fill="#fdba74" text-anchor="middle">BLOOMBERG</text>
   </g>
 
-  <text x="602" y="556" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
+  <text x="782" y="545" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
+        font-size="19" fill="#64748b">never a fourth comparison leg</text>
+
+  <text x="602" y="600" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
         font-size="20" fill="#64748b">MCP server · MIT · no API key required</text>
 </svg>

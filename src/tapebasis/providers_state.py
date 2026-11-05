@@ -10,12 +10,20 @@ Providers are first-class peers:
 ``TRADINGVIEW``  TradingView's scanner and chart websocket.
 ``FINVIZ``       finviz.com HTML and JSON islands.
 ``YAHOO``        query1.finance.yahoo.com chart API.
+``BLOOMBERG``    bloomberg.com public quote pages, single-source by design.
 
 ``ALL`` means **every provider that was asked answered**. It is a statement
 about coverage, not about agreement. Agreement is a separate axis: it lives in
 ``comparisons[].match`` and is summarised in ``notice``.
 
 ``NONE`` means no provider answered; no value is presented.
+
+Bloomberg is a label but not a reconciliation leg: it is outside
+:data:`PROVIDER_ORDER`, so it can never contribute to ``ALL`` and never enters
+``comparisons``. Its equity quotes are delayed and its statics duplicate
+Yahoo's, so counting it as a fourth independent leg would inflate the
+``MULTI_SOURCE`` claim rather than support it. It is served for what it alone
+carries, labelled ``BLOOMBERG``.
 """
 from __future__ import annotations
 
@@ -31,6 +39,7 @@ class DataProvider(str, Enum):
     TRADINGVIEW = "TRADINGVIEW"
     FINVIZ = "FINVIZ"
     YAHOO = "YAHOO"
+    BLOOMBERG = "BLOOMBERG"
     NONE = "NONE"
 
 
@@ -47,7 +56,9 @@ class Verification(str, Enum):
     UNAVAILABLE = "UNAVAILABLE"
 
 
-#: Every provider label the server can emit, in display order.
+#: Every provider label that participates in reconciliation, in display order.
+#: Bloomberg is intentionally absent: it is served single-source and must never
+#: be counted as an independent leg of ``ALL``.
 PROVIDER_ORDER: tuple[str, ...] = ("TRADINGVIEW", "FINVIZ", "YAHOO")
 
 #: Human-readable name for each provider, used in notices and docs.
@@ -55,6 +66,7 @@ PROVIDER_NAMES: dict[str, str] = {
     "TRADINGVIEW": "TradingView",
     "FINVIZ": "Finviz",
     "YAHOO": "Yahoo Finance",
+    "BLOOMBERG": "Bloomberg",
 }
 
 
@@ -85,6 +97,12 @@ PROVIDER_MEANING: dict[DataProvider, str] = {
     DataProvider.YAHOO: (
         "Data came from YAHOO only. The other providers did not supply this "
         "field, so the value is single-source and NOT corroborated."
+    ),
+    DataProvider.BLOOMBERG: (
+        "Data came from BLOOMBERG only. Bloomberg is served as a single-source "
+        "provider and is never cross-checked against the others, so treat this "
+        "value as uncorroborated. Equity quotes on bloomberg.com are delayed; "
+        "check `exchange_delay` and `print_time` before calling a price live."
     ),
     DataProvider.NONE: (
         "No provider could supply this data. Do not present any value for it."

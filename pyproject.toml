@@ -1,7 +1,7 @@
 [project]
 name = "tapebasis"
 version = "1.0.0"
-description = "MCP server that serves TradingView, Finviz and Yahoo Finance market data together, cross-checks every overlapping field, labels each response ALL/TRADINGVIEW/FINVIZ/YAHOO/NONE and monitors upstream schema drift"
+description = "MCP server that serves TradingView, Finviz and Yahoo Finance market data together, cross-checks every overlapping field, labels each response ALL/TRADINGVIEW/FINVIZ/YAHOO/NONE, adds Bloomberg as a single-source provider, and monitors upstream schema drift"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "MIT"
@@ -22,6 +22,11 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+  # Bloomberg gates plain HTTP clients on the TLS fingerprint, so its provider
+  # cannot use httpx. Pinned to the 0.16+ API (AsyncSession with `impersonate`);
+  # the accessor imports it lazily, so a missing install degrades to a clear
+  # NOT_CONFIGURED error rather than a crash at startup.
+  "curl_cffi>=0.16",
   "feedparser>=6.0.12",
   "httpx>=0.27",
   # Lower bound 1.14.0: the server uses `from __future__ import annotations`, so

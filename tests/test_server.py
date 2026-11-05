@@ -50,11 +50,13 @@ def test_all_tools_are_registered():
         "market_sentiment",
         "egx_market_overview",
         "combined_analysis",
+        "bloomberg_quote",
+        "bloomberg_markets",
         "tapebasis_health",
         "tapebasis_tool_map",
     }
     assert names == expected
-    assert len(names) == 33
+    assert len(names) == 35
 
 
 def test_every_tool_has_a_description():
@@ -65,7 +67,7 @@ def test_every_tool_has_a_description():
 
 def test_server_instructions_document_the_provider_contract():
     instructions = server.INSTRUCTIONS
-    for value in ("ALL", "TRADINGVIEW", "FINVIZ", "YAHOO", "NONE"):
+    for value in ("ALL", "TRADINGVIEW", "FINVIZ", "YAHOO", "BLOOMBERG", "NONE"):
         assert value in instructions
     assert "single-source" in instructions.lower()
     # ``ALL`` must be described as coverage, not as agreement.
@@ -123,3 +125,18 @@ def test_tool_map_enumerates_every_registered_tool():
     assert not missing, f"tools missing from the catalog: {sorted(missing)}"
     stale = catalogued - registered
     assert not stale, f"catalog lists tools that do not exist: {sorted(stale)}"
+
+
+@pytest.mark.asyncio
+async def test_tool_map_is_not_mislabelled_for_bloomberg():
+    """A Bloomberg-only tool must not report ALL as its declared provenance."""
+    from tapebasis.tools_health import tapebasis_tool_map
+
+    response = await tapebasis_tool_map()
+    fields = response["fields"]
+    assert fields["bloomberg_quote"] == "BLOOMBERG"
+    assert fields["bloomberg_markets"] == "BLOOMBERG"
+    assert fields["stock_quote"] == "ALL"
+    # Bloomberg is not a reconciliation leg, so it is not in providers_answered.
+    assert "BLOOMBERG" not in response["providers_answered"]
+    assert any("not a reconciliation leg" in warning for warning in response["warnings"])

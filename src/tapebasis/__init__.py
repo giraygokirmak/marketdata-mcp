@@ -10,6 +10,9 @@ labels each response with exactly one :data:`data_provider` value:
     ``comparisons`` and summarised in ``notice``.
 ``TRADINGVIEW`` / ``FINVIZ`` / ``YAHOO``
     Only that provider produced data. Served, but explicitly single-source.
+``BLOOMBERG``
+    Only Bloomberg produced data. Served single-source, and never cross-checked:
+    it is outside the reconciliation set, so it cannot contribute to ``ALL``.
 ``NONE``
     No provider produced data.
 

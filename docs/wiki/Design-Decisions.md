@@ -5,14 +5,15 @@ violate by accident.
 
 ---
 
-## 1. Five provider states, not two
+## 1. Six provider states, not two
 
-**Decision:** `ALL` / `TRADINGVIEW` / `FINVIZ` / `YAHOO` / `NONE`, never a boolean like
-`verified: true`.
+**Decision:** `ALL` / `TRADINGVIEW` / `FINVIZ` / `YAHOO` / `BLOOMBERG` / `NONE`, never a boolean
+like `verified: true`.
 
 **Why:** "verified" collapses two different facts: *how many providers answered* and *whether they
-agreed*. A boolean loses the case that matters most: several answered and disagreed. With five
-states plus `comparisons`, that case is visible instead of hidden.
+agreed*. A boolean loses the case that matters most: several answered and disagreed. With an explicit
+state per provider plus `comparisons`, that case is visible instead of hidden. Bloomberg was added
+later and joins the enumeration without joining the reconciliation set, see decision 30.
 
 **Consequence:** `ALL` means "every provider that was asked answered", not "they agree". Agreement
 lives in `comparisons[].match`. This is documented in several places because it is the single easiest
@@ -406,6 +407,45 @@ conflicts in the same field for every other instrument.
 change_percent` and name the field in `warnings`, which is exactly the alarm fatigue the whole
 comparison design exists to avoid. Reporting it as not comparable keeps the readings visible and the
 warning meaningful.
+
+---
+
+## 30. Bloomberg is a label, not a fourth comparison leg
+
+**Decision:** Bloomberg is added as a `data_provider` value and served through its own tools
+(`bloomberg_quote`, `bloomberg_markets`), but it is **not** added to `PROVIDER_ORDER`, is never passed
+to `reconcile.ask`, and never appears in `comparisons`. `ALL` and `MULTI_SOURCE` are unchanged by its
+existence.
+
+**Why:** access was solvable, independence was not. Three measurements decided it.
+
+- **It is delayed.** Equity quote pages report `exchangeDelay: "15 Minutes"` and
+  `isExchangeDelayed: true`. A 15-minute-old reading cannot arbitrate which of two live prints is
+  current, which is what freshness arbitration is for.
+- **It is not independent on the static fields.** Closing statics came back penny-identical to
+  Yahoo's (same previous close, same 52-week range), so counting it would pad `MULTI_SOURCE` while
+  adding no second opinion. A cross-check is only worth its label if the second reading could
+  plausibly disagree.
+- **Its timestamp is a sentinel.** Equity pages carry `lastUpdate: 2026-11-05T01:00:00.000Z` while
+  the real print was `2026-11-04T20:58:00Z`. Fed into `freshness.py`, that sentinel would make a
+  stale page win against a live print, inverting the one rule the freshness layer exists to enforce.
+  `bb_access` therefore derives `print_time` from `priceMovements1Day[-1].dateTime` and refuses it
+  when that point's value does not match the quoted price.
+
+**What it does add:** the government benchmark yield curve, plus index, commodity and FX levels on
+one board, which no other provider here publishes. That is a real capability, so it earns a label,
+its own tools and honest single-source marking rather than being folded into `ALL`.
+
+**Access constraint:** bloomberg.com gates plain HTTP clients on the TLS fingerprint. `httpx` gets a
+403 robot page with any headers; `curl_cffi` with a specific impersonation version gets 200. Only the
+HTML path is used: the `/bazaar/api/` path burned after about ten rapid requests and stayed 403 for
+minutes while the HTML page kept answering from the same session. This is also why the health monitor
+has no Bloomberg probe: an `httpx` probe would report a false outage, so the tool response itself is
+the availability signal.
+
+**Consequence:** a response can say `BLOOMBERG` and `SINGLE_SOURCE` together, never `ALL`, and both
+tools return `cross_checked: false` / `reconciliation_leg: false` so an agent cannot mistake it for a
+corroborated figure. The board reports `print_time: null`, because it has none.
 
 ---
 

@@ -50,6 +50,7 @@ jobs:
               "stock_news", "stock_options_chain", "stock_earnings",
               "stock_extended_hours", "technical_analysis",
               "stock_filings", "stock_ownership", "stock_chart",
+              "bloomberg_quote", "bloomberg_markets",
               "tapebasis_health", "tapebasis_tool_map",
           }
           missing = required - names

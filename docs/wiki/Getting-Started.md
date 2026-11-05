@@ -128,7 +128,9 @@ Five things to notice:
    becomes explicable.
 
 If `data_provider` were `TRADINGVIEW`, `FINVIZ` or `YAHOO`, the notice would say the data is
-**not corroborated** and an agent must relay that.
+**not corroborated** and an agent must relay that. `BLOOMBERG` works the same way, with one extra
+fact stated: it is single-source *by design* and never cross-checked, and its equity quotes are
+delayed, so `exchange_delay` and `print_time` travel with the payload.
 
 ## A single-source instrument
 
@@ -157,9 +159,41 @@ says it is single-source. `errors` is empty because no provider *failed*: two si
 spot gold, and Yahoo's note refuses to substitute a futures contract for a spot pair. A different
 instrument at a different price is not the same quote.
 
+## Bloomberg: the provider that is not a cross-check
+
+```
+bloomberg_markets()
+```
+
+```jsonc
+{
+  "data_provider": "BLOOMBERG",
+  "verification": "SINGLE_SOURCE",
+  "providers_answered": ["BLOOMBERG"],
+  "cross_checked": false,
+  "reconciliation_leg": false,
+  "print_time": null,
+  "data": {
+    "government_yields": [
+      { "symbol": "GT10:GOV", "name": "US 10 Yr", "price": 4.8777106, "change_percent": -0.0102 }
+    ],
+    "indices": [ { "symbol": "SPX:IND", "name": "S&P 500", "price": 7688.62 } ],
+    "commodities": [ ... ],
+    "fx": [ ... ]
+  },
+  "warnings": [ "Bloomberg's market board carries no per-instrument print time ..." ]
+}
+```
+
+Bloomberg has its own label but no seat at the comparison table: it is not in `PROVIDER_ORDER`, so it
+cannot contribute to `ALL`. `bloomberg_quote("AAPL")` returns its delayed quote page; a corroborated
+price still comes from `stock_quote`. The government benchmark curve is the capability no other
+provider here publishes, which is why the provider is served at all. Access needs `curl_cffi`, which
+`pip install -e .` brings in: bloomberg.com rejects plain HTTP clients on the TLS fingerprint.
+
 ## Next
 
 - [Response Contract](Response-Contract): every field explained
-- [Tools Reference](Tools-Reference): all 33 tools
+- [Tools Reference](Tools-Reference): all 35 tools
 - [Configuration](Configuration): environment variables
 - [Docker](Docker): prebuilt GHCR image or a local build

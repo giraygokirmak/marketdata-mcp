@@ -150,7 +150,11 @@ shape. Check `docker compose logs` and then [Troubleshooting](Troubleshooting).
   network-level egress control if you need it.
 - The image has no authentication. Do not expose port 6013 to the public internet without a reverse
   proxy that adds auth.
-- Image size is dominated by pandas and the provider layer; it is not a slim image.
+- Image size is dominated by pandas and the provider layer; it is not a slim image. `curl_cffi`, which
+  the Bloomberg provider needs for its TLS impersonation, adds about 14 MB of bundled libcurl.
+- Bloomberg needs no extra configuration in the image: `curl_cffi` is a normal dependency, and the
+  provider paces itself at one request every 10 s. Only an egress rule that blocks `bloomberg.com`
+  will make `bloomberg_*` return `NONE`.
 
 ## Related
 

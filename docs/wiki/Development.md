@@ -12,7 +12,7 @@ pip install -e ".[dev]"
 ## Tests
 
 ```bash
-pytest                      # 182 hermetic tests, no network
+pytest                      # 222 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 pytest tests/test_reconcile.py -v
 ```
@@ -37,6 +37,7 @@ Finviz page would fail for reasons unrelated to the code.
 | `test_health.py` | Probe verdicts, fingerprints, drift detection, `rate_limits` block |
 | `test_sentiment.py` | Local scoring: direction, neutrality, determinism, aggregation |
 | `test_sentiment_tool.py` | Token-free path, backend switching, no fabricated scores |
+| `test_bloomberg.py` | Symbol mapping, `print_time` from the intraday series, sentinel rejection, single-source envelope |
 | `test_server.py` | Tool registration, MCP surface |
 
 `test_upstream_contract.py` is the file to extend when live probing finds a provider behaving
@@ -75,10 +76,12 @@ src/tapebasis/
 ├── tv_access.py          typed access to TradingView's own data
 ├── fv_access.py          typed access to the Finviz provider
 ├── yh_access.py          typed access to the Yahoo Finance provider
+├── bb_access.py          typed access to bloomberg.com (single-source, curl_cffi)
 ├── catalog.py            tool catalogue (plain data)
 ├── tools_market.py       multi-source tools
 ├── tools_finviz.py       Finviz-only tools
 ├── tools_tradingview.py  TradingView-only tools + combined_analysis
+├── tools_bloomberg.py    Bloomberg-only tools (single-source)
 ├── tools_health.py       health + tool map
 └── providers/            provider implementations (TradingView, Finviz)
 ```
@@ -137,6 +140,14 @@ marked `NOT_ATTEMPTED`, which is excluded from `errors`.
 If the data originates from a different provider than the one whose dataset you are calling, **label
 the actual origin**. `market_sentiment`'s local path is `FINVIZ` because the headlines are Finviz's
 even though the tool lives in `tools_tradingview.py`.
+
+A provider that cannot strengthen a cross-check does **not** get a place in `PROVIDER_ORDER`. Build
+it like `tools_bloomberg.py`: its own label in `DataProvider`, its own accessor, `envelope(...)` with
+`provider=DataProvider.<NAME>` so the result reads `SINGLE_SOURCE`, plus `cross_checked: false` and
+`reconciliation_leg: false`. Keep it out of `single()` too: that helper iterates `PROVIDER_ORDER`, so
+a label outside it produces no attempt row at all. Add the label to `PROVIDER_NAMES` and
+`PROVIDER_MEANING`, and add its limiter to `ratelimit.LIMITERS` so `GET /health` still reports its
+pacing. Needs and needs-not for the label itself are in Design Decisions 30.
 
 ## House rules
 
