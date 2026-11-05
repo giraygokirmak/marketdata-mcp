@@ -92,7 +92,8 @@ src/tapebasis/
    `ratelimit.limiter(PROVIDER)` so the new call inherits pacing and cooldown.
 3. **Add shapers** to `merge_helpers.py`, pure `dict → dict`, no I/O.
 4. **Add `FieldSpec`s** with `tv_get`, `fv_get` **and** `yh_get` where the provider can supply the
-   field, plus a tolerance. Mark session-relative fields with `max_skew_seconds`.
+   field, plus a tolerance. Mark session-relative fields with `max_skew_seconds`,
+   `session_boundary=True` and, when the tool can see the clock, `max_age_seconds`.
 5. **Write the tool** in `tools_market.py` using `ask(tv, fv, yh)` + `finalize()`.
 6. **Register it** in `_TOOLS` and in `catalog.py` with the real provider set.
 7. **Test** with faked providers: all-answer, partial, one-answers, all-fail, a disagreement, and
@@ -113,13 +114,20 @@ reason in the `FieldSpec` or a comment: a future reader will want to know why 12
 ### When readings are not comparable
 
 Do not widen a tolerance to hide a legitimate difference. If two readings are measured against
-different baselines (a day change against a previous close, a session volume), set
-`max_skew_seconds` so the pair is reported as `not_comparable` with the gap, and the field is named in
-`warnings`. Widening the tolerance would report a false agreement; leaving it tight would report a
-false conflict. Neither is true.
+different baselines (a day change against a previous close, a session volume), set the guards
+described in Design Decisions 28: `max_skew_seconds` for distance, `session_boundary` for a roll,
+and `max_age_seconds` against the clock. The pair is then reported as `not_comparable` with the
+reason, and the field is named in `warnings`. Widening the tolerance would report a false agreement;
+leaving it tight would report a false conflict. Neither is true.
 
 Use `require_all_times=True` when a provider does not expose observation times at all: agreement
 cannot be *proven*, so `match` stays `null`.
+
+Use `not_comparable_reason` when the field has no shared definition at all, so no timestamp check can
+help. FX is the case in the code: spot FX has no single official previous close, each provider picks
+its own daily roll, so `change_percent` is reported from every provider but never judged. Do not use
+this to paper over a tolerance you cannot justify: it makes a claim about the field, not about the
+data quality.
 
 ## Adding a single-source tool
 

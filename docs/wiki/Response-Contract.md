@@ -101,7 +101,7 @@ Set on a field whose readings cannot be legitimately compared, with the reason:
   "not_comparable": true,
   "pairs": [
     { "between": ["TRADINGVIEW", "FINVIZ"], "match": null,
-      "not_comparable": "prints are 9.7h apart; this field is measured against a session-relative baseline, so the readings are not comparable" }
+      "not_comparable": "prints belong to different sessions (2026-11-03 and 2026-11-04); this field is measured against a session-relative baseline, so the readings are not comparable" }
   ]
 }
 ```
@@ -109,7 +109,14 @@ Set on a field whose readings cannot be legitimately compared, with the reason:
 A day-change percentage or a session volume is measured against the previous close of the session the
 print belongs to. Two providers looking at different sessions legitimately differ, so calling that a
 "conflict" would be a false alarm. The pair is excluded from the agreement decision, every reading
-stays visible, and the field is listed in `warnings` as not cross-checked.
+stays visible, and the field is listed in `warnings` as not cross-checked. The reason in
+`pairs[].not_comparable` says which guard fired: different session dates, a print past the age
+ceiling, or no print time to prove the observation.
+
+`not_comparable` is also used for a field that has **no shared definition**, where no timestamp check
+can help. Spot FX has no single official previous close, so `change_percent` on an FX instrument is
+always reported from every provider and never compared, with that reason stated. Every guard is
+one-way: it can lose a comparison, never invent a conflict.
 
 `match: null` **without** `not_comparable` means the comparison was impossible (a non-numeric or
 missing value). `match: false` is a real disagreement.
@@ -194,8 +201,7 @@ Common codes: `UPSTREAM_TIMEOUT`, `UPSTREAM_RATE_LIMIT`, `UPSTREAM_BLOCKED`, `UP
 
 ### `warnings`
 Human-readable cautions. A disagreement adds `"Providers disagree on: price"`. A field that could not
-be compared adds `"Not cross-checked (providers' prints belong to different sessions): change_percent,
-volume"`. Health drift adds a warning naming the affected upstream.
+be compared adds `"Not cross-checked (no shared basis for comparison): change_percent, volume"`. Health drift adds a warning naming the affected upstream.
 
 ### `degraded`
 `true` when the health monitor reports drift or an outage **for a provider this call actually used**.
@@ -212,7 +218,7 @@ readings are not flagged over rounding noise.
 | Field | Tolerance | Why |
 | --- | --- | --- |
 | price | 0.5 % | Same instrument, different print times |
-| change % | 2 % (floor 0.05) | Derived from different reference closes |
+| change % | 2 % (floor 0.05) | Derived from different reference closes; not judged at all on FX |
 | previous close | 0.5 % | Should be identical; a gap is meaningful |
 | P/E | 2 % | Rounding in the Finviz snapshot |
 | RSI(14) | 5 % (floor 0.5) | Different lookback windows |
@@ -225,10 +231,35 @@ readings are not flagged over rounding noise.
 Tolerances are per-field in `tools_market._quote_specs()` and at the comparison sites, and are echoed
 back in each `comparisons` row.
 
-Fields marked session-relative (`change_percent`, `previous_close`, `volume`) also carry
-`max_skew_seconds = 3600`: readings more than an hour apart are reported as *not comparable* rather
-than as a disagreement. The price itself is still compared, because a price stays comparable across
-minutes while a session baseline does not.
+Fields marked session-relative (`change_percent`, `previous_close`, `volume`) are governed by three
+guards, applied per field, because a day change is measured against the previous close *of the
+session the print belongs to*:
+
+| Guard | Value | What it catches | What it cannot see |
+| --- | --- | --- | --- |
+| `max_skew_seconds` | 900 s | two prints far enough apart to be different observations | a session roll between two nearby prints; every provider frozen together |
+| `session_boundary` | US/Eastern date | prints on either side of a session roll, even 30 s apart | a feed that stopped updating inside one session |
+| `max_age_seconds` | 8 h, within one session date | a print that stopped advancing while the clock kept moving | anything across a session boundary, where a quote legitimately ages overnight |
+
+The age ceiling is set on `change_percent` and `volume`, the two fields re-derived from the print.
+`previous_close` does not get it: an old quote does not falsify a previous close, so only the skew
+and session-date guards apply there.
+
+Readings that fail a guard are reported as *not comparable* rather than as a disagreement: both
+readings stay in `comparisons`, the field is named in `warnings`, and it is never counted as a
+conflict. The guards are one-way by design, they can lose a comparison but never invent one.
+
+One field has no shared definition at all, so no timestamp check can rescue it. **Spot FX has no
+single official previous close**: each provider derives its own daily roll, so a day change of 0.09 %
+and one of 0.31 % are answers to different questions, one second apart. On an FX resolution the
+`change_percent` field is therefore always `not_comparable`, with that reason in the pair, while the
+readings stay visible. This is instrument-level, not provider-level: it applies whenever any provider
+resolved the symbol to `forex` or `currency`.
+
+The 900 s ceiling is measured, not arbitrary: two *live* endpoints were observed 604 s apart on a
+thin contract (gold futures, TradingView 09:13:15Z vs Yahoo 09:03:11Z), so a tighter value would
+discard valid comparisons in order to look strict. The price itself is still compared regardless,
+because a price stays comparable across minutes while a session baseline does not.
 
 ## A worked multi-provider response
 
@@ -237,7 +268,7 @@ minutes while a session baseline does not.
   "data_provider": "ALL",
   "verification": "MULTI_SOURCE",
   "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO"],
-  "notice": "Every provider asked answered (TradingView, Finviz and Yahoo Finance). Coverage is ALL; agreement is a separate axis. Compared fields agree within tolerance. The value shown is FINVIZ's because it printed more recently than the other providers'. Not cross-checked because the providers' prints belong to different sessions: change_percent, previous_close, volume.",
+  "notice": "Every provider asked answered (TradingView, Finviz and Yahoo Finance). Coverage is ALL; agreement is a separate axis. Compared fields agree within tolerance. The value shown is FINVIZ's because it printed more recently than the other providers'. Not cross-checked, because the providers' readings have no shared basis for comparison: change_percent, previous_close, volume.",
   "data": { "price": 332.33, "change_percent": 0.13, ... },   // one value per field
   "fields": { "price": "ALL", "peers": "FINVIZ", ... },
   "freshness": { "chosen": "FINVIZ", "decision": "newest",
@@ -249,7 +280,7 @@ minutes while a session baseline does not.
     { "field": "change_percent", "match": null, "not_comparable": true,
       "values": { "TRADINGVIEW": -1.8976, "FINVIZ": 0.13, "YAHOO": -1.8976 } }
   ],
-  "warnings": ["Not cross-checked (providers' prints belong to different sessions): change_percent, previous_close, volume"],
+  "warnings": ["Not cross-checked (no shared basis for comparison): change_percent, previous_close, volume"],
   "degraded": false
 }
 ```

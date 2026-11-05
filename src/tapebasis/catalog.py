@@ -27,7 +27,11 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
             "Finviz. Finviz-only fields (the 84-field snapshot, profile, peers, "
             "after-hours) ride along labelled per field in `fields`. Symbols are resolved "
             "per provider, so XAUUSD becomes OANDA:XAUUSD, Yahoo reports that it has no "
-            "spot-gold pair, and Finviz is told it does not carry it; see `resolutions`."
+            "spot-gold pair, and Finviz is told it does not carry it; see `resolutions`. "
+            "A day change is only compared when the prints share a US/Eastern session "
+            "date and are within 15 minutes, and are not stale against the clock; "
+            "otherwise the field is reported as not cross-checked. On FX it is never "
+            "compared: spot FX has no single official previous close."
         ),
     },
     {
@@ -39,7 +43,9 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
             "Each row carries its own data_provider, `providers_answered` and an `agrees` "
             "flag: a symbol can be multi-source, single-source or NONE independently of "
             "the others. Multi-source rows also carry `price_source`, whose print the "
-            "single `price` came from, plus their own `comparisons` block."
+            "single `price` came from, plus their own `comparisons` block. An FX day "
+            "change is reported but never compared, for the same reason as in "
+            "`stock_quote`."
         ),
     },
     {
@@ -63,9 +69,11 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "notes": (
             "TradingView SP:SPX / DJ:DJI / NASDAQ:IXIC / TVC:RUT / TVC:VIX, Finviz "
             "DJI/SPX/COMP and Yahoo ^GSPC/^DJI/^IXIC/^RUT/^VIX are mapped to one canonical "
-            "name before comparison. Day-change % is reported from every provider but not "
-            "compared: each derives it from a different reference close, so a small gap is "
-            "a formula difference rather than a data conflict."
+            "name before comparison. Levels are compared only between prints sharing a "
+            "US/Eastern session date, so a provider that has rolled into the next "
+            "session is treated as newer, not wrong. Day-change % is reported from every "
+            "provider but not compared: each derives it from a different reference close, "
+            "so a small gap is a formula difference rather than a data conflict."
         ),
     },
     {

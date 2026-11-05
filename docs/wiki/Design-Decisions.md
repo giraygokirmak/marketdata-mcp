@@ -69,18 +69,22 @@ ones.
 
 ---
 
-## 5. A session-relative field is not compared across sessions
+## 5. A session-relative field is not compared across observations
 
-**Decision:** `change_percent`, `previous_close` and `volume` carry `max_skew_seconds = 3600`. When
-two readings come from prints more than an hour apart, the pair is reported as `not_comparable` with
-the gap, and the field is listed in `warnings` as not cross-checked.
+**Decision:** `change_percent`, `previous_close` and `volume` carry `max_skew_seconds = 900` and
+`session_boundary = True`; the two re-derived fields (`change_percent`, `volume`) also carry
+`max_age_seconds = 8h` when a reference clock is supplied. `previous_close` omits the age ceiling
+because an old quote does not falsify a previous close.
+A pair that fails any guard is reported as `not_comparable` with the reason, and the field is listed
+in `warnings` as not cross-checked.
 
 **Why:** those fields are measured against the previous close of the session the print belongs to.
 A pre-market Finviz quote and a prior-close Yahoo quote legitimately disagree about the day change:
 that is two different questions, not two answers to one. Reporting it as a provider conflict produces
 a warning on nearly every call, which trains readers to ignore warnings; widening the tolerance would
 report a false agreement. Neither is true, so the pair is excluded from the agreement decision and the
-reason is stated.
+reason is stated. The three guards exist because each sees a hazard the others cannot; the reasoning
+and the measured floor for the 900 s value are in decision 28.
 
 **Consequence:** the price itself is still compared across minutes. A price stays comparable across
 print times; a session baseline does not. `require_all_times=True` is the same principle for
@@ -353,6 +357,55 @@ Pinning the fix into the build makes the image reproducible regardless of when i
 to the cent (0.5 %); RSI computed over different lookbacks can differ by percent (5 %); ATR across
 providers can differ more (10 %); VIX moves percent-level within a minute (3 %). A single number
 would be simultaneously too tight for one field and too loose for another.
+
+---
+
+## 28. Comparability takes more than one time threshold
+
+**Decision:** a session-relative field is compared only when the guards that apply to it pass: a
+900 s print-time ceiling, equality of the US/Eastern session date, and, for the fields re-derived
+from the print (`change_percent`, `volume`), an 8 h absolute age ceiling when a reference clock is
+available. `previous_close` takes the first two only, because an old quote does not falsify a
+previous close.
+
+**Why:** each guard sees something the others cannot.
+
+- The seconds ceiling alone is blind to a session roll: two prints 30 s apart across midnight ET
+  are a whole session apart in meaning and pass any threshold. Comparing them reports a false
+  conflict, which is the one outcome a verification tool cannot afford.
+- The measured floor for the ceiling is not zero. Two *live* endpoints were observed 604 s apart on
+  a thin contract (gold futures: TradingView 09:13:15Z, Yahoo 09:03:11Z). A tighter ceiling buys
+  apparent rigor by discarding valid comparisons.
+- Skew compares providers to *each other*, so a feed that froze together with its peers has zero
+  skew and passes. Only a comparison against the clock sees that. The ceiling is therefore absolute,
+  but applied only within one session date: a quote legitimately ages overnight and across a long
+  weekend, so a plain wall-clock test would fire on correct data.
+- Every guard is one-way. Failing one produces `not comparable`, never a disagreement, so the guards
+  can lose a comparison but can never invent a conflict.
+
+**Consequence:** tests and replays stay deterministic, because the age ceiling is inert unless the
+caller passes `now`. Fixtures dated in the past are therefore not silently aged out.
+
+---
+
+## 29. An FX day change is never called a conflict
+
+**Decision:** when any provider resolves the instrument to FX (`forex` on TradingView, `currency` on
+Yahoo), `change_percent` is reported from every provider but marked `not_comparable` with an explicit
+reason. `stock_quote` and `stock_prices` both apply the rule.
+
+**Why:** the guards in decision 28 all assume the field has one definition and the providers merely
+observe it at different moments. FX breaks that assumption. Spot FX has no single official previous
+close, so each provider picks its own daily roll; measured live on EURUSD, TradingView reported a
+day change of 0.0935 % and Yahoo 0.3101 % on prints one second apart, from baselines of 1.12289 and
+1.12072. Both are correct against their own baseline, which means a tolerance cannot separate a real
+conflict from a difference in definition. Widening the tolerance to hide it would also hide genuine
+conflicts in the same field for every other instrument.
+
+**Consequence:** every FX `stock_quote` call would otherwise carry `Providers disagree on:
+change_percent` and name the field in `warnings`, which is exactly the alarm fatigue the whole
+comparison design exists to avoid. Reporting it as not comparable keeps the readings visible and the
+warning meaningful.
 
 ---
 

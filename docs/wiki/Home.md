@@ -113,6 +113,13 @@ subset of providers answering is still `ALL`; `providers_answered` names which o
 stay in `comparisons`, the field is named in `notice` and `warnings`, and `data_provider` stays `ALL`.
 An agent reading it can see exactly how far apart they are.
 
+**A non-comparison is not a disagreement.** A field the providers measure against different baselines
+is reported as `not_comparable`, with the reason in `pairs[].not_comparable`, instead of being called
+a conflict. That covers a day change or volume whose prints belong to different sessions, a print
+past the staleness ceiling, a provider that exposes no print time at all, and a field with no shared
+definition: spot FX has no single official previous close, so an FX day change is always reported
+from every provider and never judged.
+
 Full detail: [Response Contract](Response-Contract).
 
 ---

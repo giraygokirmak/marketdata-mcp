@@ -93,12 +93,19 @@ stay in `comparisons`, the field is named in `notice` and `warnings`, and `data_
 (every asked provider *did* answer; they just disagree). The single value in `data` is the newest
 print, and the notice says so.
 
-**A field measured against a session baseline is not compared across sessions.** A day-change
+**A field measured against a session baseline is not compared across observations.** A day-change
 percentage or a session volume is derived from the previous close of the session the print belongs
 to. Finviz in a pre-market session and Yahoo at the prior close will legitimately differ, so such a
-pair is reported as `not_comparable` (with the hour gap in `pairs[].not_comparable`) instead of being
-called a provider conflict. Both readings still appear; the field is listed in `warnings` as not
-cross-checked.
+pair is reported as `not_comparable` (with the reason in `pairs[].not_comparable`) instead of being
+called a provider conflict. Three guards decide that: a 900 s print-time ceiling, equality of the
+US/Eastern session date even when the prints are seconds apart, and, for the fields re-derived from
+the print, an 8 h age ceiling against the clock so a feed that froze with its peers cannot pass.
+Both readings still appear; the field is listed in `warnings` as not cross-checked.
+
+**Some fields have no shared definition at all.** Spot FX has no single official previous close, so
+each provider derives its own daily roll and the day-change figures answer different questions. On
+FX, `change_percent` is therefore always reported from every provider but never compared, with that
+reason in the pair. Instrument-level, not provider-level: no tolerance can make it a conflict.
 
 Implementation: [`reconcile.py`](src/tapebasis/reconcile.py) (fan-out + comparison),
 [`freshness.py`](src/tapebasis/freshness.py) (print-time parsing),
@@ -401,7 +408,8 @@ No proxy configuration exists: every provider reaches its upstream directly.
 4. Check comparisons when you need to show how far apart the providers are.
    match: true  -> they agree within tolerance.
    match: false -> a real disagreement; every reading is in `values`.
-   match: null  -> not comparable (no print time, or different sessions).
+   match: null  -> not comparable: no print time, a session/age difference, or
+                   a field with no shared definition (FX day change).
 
 5. Check resolutions when a symbol behaved unexpectedly: it shows exactly which
    ticker each provider was asked for, and why.

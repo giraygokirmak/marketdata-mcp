@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import math
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 
 from .providers_state import (
@@ -332,6 +333,10 @@ def compare_values(
     absolute_floor: float = 0.0,
     times: Mapping[str, Any] | None = None,
     max_skew_seconds: float | None = None,
+    session_boundary: bool = False,
+    max_age_seconds: float | None = None,
+    now: datetime | None = None,
+    not_comparable_reason: str | None = None,
     require_all_times: bool = False,
 ) -> dict[str, Any]:
     """Compare the same field across N providers.
@@ -349,8 +354,26 @@ def compare_values(
     a false alarm. Such a pair is recorded as not comparable (``match: None``
     with a ``reason``) and left out of the agreement decision, while every
     reading stays visible in ``values``.
+
+    Three independent guards narrow what may be compared, in increasing order of
+    what they can see:
+
+    * ``max_skew_seconds``: distance between the two prints. Blind to a session
+      roll, and blind to every provider freezing together.
+    * ``session_boundary``: different US/Eastern session date. Catches a roll
+      that a seconds-based ceiling cannot, and is deliberately one-way: it can
+      lose a comparison, never manufacture a conflict.
+    * ``max_age_seconds`` + ``now``: the only check that looks at the clock, so
+      the only one that can see a feed that froze mid-session. Inert when no
+      reference clock is passed, which keeps tests and replays deterministic.
+
+    ``not_comparable_reason`` is for a field that has no shared definition in the
+    first place, where no amount of timestamp checking helps: FX has no single
+    official previous close, so each provider derives its own roll and the day
+    changes are answers to different questions. The readings are kept and the
+    pair is reported as not comparable with that reason.
     """
-    from .freshness import parse_market_timestamp
+    from .freshness import parse_market_timestamp, session_date
 
     present = {p: v for p, v in values.items() if v is not None}
     row: dict[str, Any] = {
@@ -364,9 +387,33 @@ def compare_values(
     labels = [p for p in PROVIDER_ORDER if p in present]
     if len(labels) < 2:
         return row
+    if not_comparable_reason is not None:
+        # Structurally not the same measurement, at any timestamp. Say so once
+        # and leave the numbers visible rather than pretending they disagree.
+        for index, left in enumerate(labels):
+            for right in labels[index + 1:]:
+                row["pairs"].append(
+                    {
+                        "between": [left, right],
+                        "tv": present.get(left),
+                        "fv": present.get(right),
+                        "match": None,
+                        "diff": None,
+                        "diff_pct": None,
+                        "tolerance_pct": tolerance_pct,
+                        "not_comparable": not_comparable_reason,
+                    }
+                )
+        row["not_comparable"] = True
+        return row
 
     stamps: dict[str, Any] = {}
-    if times and (max_skew_seconds is not None or require_all_times):
+    if times and (
+        max_skew_seconds is not None
+        or require_all_times
+        or session_boundary
+        or (max_age_seconds is not None and now is not None)
+    ):
         stamps = {p: parse_market_timestamp(times.get(p)) for p in labels}
 
     def _skew_reason(left: str, right: str) -> str | None:
@@ -380,6 +427,28 @@ def compare_values(
                     "readings cannot be shown to describe the same observation"
                 )
             return None
+        if session_boundary:
+            day_a, day_b = session_date(a), session_date(b)
+            if day_a is not None and day_b is not None and day_a != day_b:
+                return (
+                    f"prints belong to different sessions ({day_a} and {day_b}); "
+                    f"this field is measured against a session-relative baseline, "
+                    f"so the readings are not comparable"
+                )
+        if max_age_seconds is not None and now is not None:
+            for label, stamp in ((left, a), (right, b)):
+                # Only inside one session date: a quote legitimately ages
+                # overnight and across a long weekend, so a wall-clock ceiling
+                # applied across a boundary would fire on correct data.
+                if session_date(stamp) != session_date(now):
+                    continue
+                age = (now - stamp).total_seconds()
+                if age > max_age_seconds:
+                    return (
+                        f"{label}'s print is {age / 60:.0f}m old within the same "
+                        f"session, past the {max_age_seconds / 60:.0f}m ceiling; "
+                        f"the feed looks frozen, so agreement cannot be asserted"
+                    )
         if max_skew_seconds is None:
             return None
         gap = abs((a - b).total_seconds())
@@ -446,8 +515,30 @@ class FieldSpec:
     yh_get: Callable[[dict[str, Any]], Any] | None = None
     #: When set, readings whose observation times differ by more than this many
     #: seconds are reported as *not comparable* instead of as a disagreement.
-    #: Only meaningful for session-relative fields (a day change, a volume), #: a price can be compared across minutes, a session baseline cannot.
+    #: Only meaningful for session-relative fields (a day change, a volume), a
+    #: price can be compared across minutes, a session baseline cannot.
+    #:
+    #: The floor is the natural skew of two *live* endpoints, not zero: measured
+    #: across TradingView and Yahoo it reaches ~600s on thin futures, so a
+    #: tighter ceiling would throw away valid comparisons to look rigorous.
     max_skew_seconds: float | None = None
+    #: Compare the US/Eastern session *date* of the two prints, not just their
+    #: distance. A fixed ceiling cannot see the hazard this exists for: two
+    #: prints 30 seconds apart that straddle a session roll are a whole session
+    #: apart in meaning, and pass any seconds-based test.
+    session_boundary: bool = False
+    #: Absolute age ceiling, applied only when a reference clock is supplied and
+    #: only within one session date. ``max_skew_seconds`` compares providers to
+    #: each other, so a feed that froze while every provider froze passes it;
+    #: this is the only check that looks at the clock. It is inert across a
+    #: session boundary because a quote legitimately ages overnight and over a
+    #: long weekend, which is why it cannot be a plain wall-clock test.
+    max_age_seconds: float | None = None
+    #: Set when the field has no shared definition across providers at all, so
+    #: no timestamp check can make it comparable. FX day change is the case:
+    #: there is no single official previous close, each provider picks its own
+    #: roll, and the readings answer different questions.
+    not_comparable_reason: str | None = None
 
     def extract(self, provider: str, payload: dict[str, Any]) -> Any:
         getter = {
@@ -468,8 +559,9 @@ class Merged:
     mismatches: list[str] = field(default_factory=list)
     provider: DataProvider = DataProvider.NONE
     answered: list[str] = field(default_factory=list)
-    #: Fields whose readings describe different sessions, so comparing them
-    #: would invent a conflict. Reported, never counted as disagreement.
+    #: Fields whose readings were not judged at all, so comparing them would
+    #: invent a conflict or an unprovable agreement. Reported, never counted as
+    #: a disagreement. The reason is in ``comparisons[].pairs[].not_comparable``.
     not_comparable: list[str] = field(default_factory=list)
     #: Which provider supplied the resolved values, and why. ``None`` when the
     #: resolution was not a freshness decision (single-source, or no timestamps).
@@ -555,6 +647,7 @@ def merge_many(
     *,
     shapes: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
     times: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
 ) -> Merged:
     """Compare N provider payloads; resolve each field to a single value.
 
@@ -612,6 +705,10 @@ def merge_many(
             absolute_floor=spec.absolute_floor,
             times=times,
             max_skew_seconds=spec.max_skew_seconds,
+            session_boundary=spec.session_boundary,
+            max_age_seconds=spec.max_age_seconds,
+            now=now,
+            not_comparable_reason=spec.not_comparable_reason,
         )
         row["field"] = spec.name
         out.comparisons.append(row)
@@ -728,8 +825,8 @@ def notice_for(merged: Merged) -> str:
             )
     if merged.not_comparable:
         base += (
-            " Not cross-checked because the providers' prints belong to different "
-            "sessions: " + ", ".join(merged.not_comparable) + "."
+            " Not cross-checked, because the providers' readings have no shared "
+            "basis for comparison: " + ", ".join(merged.not_comparable) + "."
         )
     return base
 
@@ -751,6 +848,7 @@ def finalize(
     tv_time: Any = None,
     fv_time: Any = None,
     yahoo_time: Any = None,
+    now: datetime | None = None,
     sources: dict[str, str] | None = None,
     warnings: Iterable[str] = (),
     degraded: bool = False,
@@ -770,6 +868,10 @@ def finalize(
     ``tv_time``/``fv_time``/``yahoo_time`` are the **market print** timestamps
     (not fetch times). When providers answered, every compared field resolves to
     the freshest provider's reading; all originals stay in ``comparisons``.
+
+    ``now`` is the reference clock for a field's absolute-age ceiling. Pass it
+    when the tool can observe the real time: without it the frozen-feed guard is
+    inert, which keeps test fixtures (dated in the past) deterministic.
 
     ``data``/``provider``/``answered`` override the reconciled payload and
     label; tools that compose a richer payload than the field list use them, and
@@ -803,7 +905,7 @@ def finalize(
         if stamp is not None:
             times[label] = stamp
 
-    merged = merge_many(payloads, specs, shapes=shapes, times=times)
+    merged = merge_many(payloads, specs, shapes=shapes, times=times, now=now)
     if provider is not None:
         merged.provider = provider
     if data is not None:
@@ -825,7 +927,7 @@ def finalize(
         )
     if merged.provider is not DataProvider.NONE and merged.not_comparable:
         warn_list.append(
-            "Not cross-checked (providers' prints belong to different sessions): "
+            "Not cross-checked (no shared basis for comparison): "
             + ", ".join(merged.not_comparable)
         )
 

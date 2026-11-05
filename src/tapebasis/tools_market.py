@@ -52,6 +52,28 @@ from .symbols import resolve, strip_exchange, to_finviz
 #: Every provider the market tools ask. Yahoo is a peer, not a fallback.
 ALL_PROVIDERS = (TRADINGVIEW, FINVIZ, YAHOO)
 
+#: Largest print-time gap still treated as the same observation for a
+#: session-relative field (a day change, a previous close, accumulated volume).
+#:
+#: The floor is empirical, not zero: two *live* endpoints were measured 604s
+#: apart on a thin contract (TradingView 09:13:15Z vs Yahoo 09:03:11Z for
+#: gold futures), so a tighter ceiling would throw away valid comparisons in
+#: order to look strict. The ceiling is one session, which is where the field
+#: stops being the same measurement at all.
+SKEW_LIMIT_SECONDS = 900.0
+
+#: A print older than this, *within the same US/Eastern session date*, is not
+#: accepted as the current observation of a session-relative field.
+#:
+#: Eight hours is one regular session plus buffers. It is deliberately the
+#: point just past a legitimate after-close read: a 16:00 ET print is at most
+#: ~8h old before the session date rolls at midnight ET, so a tighter ceiling
+#: would flag every evening quote as "frozen" and lose correct comparisons. It
+#: still catches a feed that stopped updating for most of a day while the clock
+#: kept moving. Applied only when the caller supplies a reference clock, which
+#: keeps replays and fixtures deterministic.
+MAX_SESSION_AGE_SECONDS = 8 * 3600.0
+
 
 def _health(kwargs: dict[str, Any]) -> dict[str, Any]:
     """Attach monitor-derived warnings/degraded flag scoped to attempted providers."""
@@ -95,12 +117,37 @@ async def _symbols_for(symbol: str) -> dict[str, Any]:
 
 
 
-def _quote_specs() -> tuple[FieldSpec, ...]:
+def _is_fx(*resolutions: Any) -> bool:
+    """True when any provider resolved the instrument to a currency pair.
+
+    TradingView says ``forex``, Yahoo says ``currency``, Finviz never carries
+    one. Any positive is enough: the day-change question is structural, not
+    provider-specific.
+    """
+    return any(
+        (getattr(r, "asset_class", "") or "").lower() in {"forex", "currency"}
+        for r in resolutions
+        if r is not None
+    )
+
+
+#: Why an FX day change is not cross-checked, stated as the fact it is.
+_FX_DAY_CHANGE_REASON = (
+    "spot FX has no single official previous close; each provider derives its "
+    "own daily roll, so the day-change figures answer different questions"
+)
+
+
+def _quote_specs(*, day_change_comparable: bool = True) -> tuple[FieldSpec, ...]:
     """Fields every provider is asked for, and the tolerance for each.
 
     Every spec carries a getter for every provider. A missing getter would silently
     exclude that provider from the comparison, which would make an
     ``ALL`` label claim coverage the comparison never actually checked.
+
+    ``day_change_comparable=False`` marks the day change as structurally not
+    comparable instead of comparing readings that share no baseline. Every
+    reading is still reported.
     """
     return (
         FieldSpec(
@@ -119,8 +166,12 @@ def _quote_specs() -> tuple[FieldSpec, ...]:
             absolute_floor=0.05,
             # A day change is measured against the previous close *of the
             # session the print belongs to*. Two providers looking at different
-            # sessions will legitimately differ, so only compare within an hour.
-            max_skew_seconds=3600.0,
+            # sessions will legitimately differ, so the same session is a
+            # precondition, not a detail.
+            max_skew_seconds=SKEW_LIMIT_SECONDS,
+            session_boundary=True,
+            max_age_seconds=MAX_SESSION_AGE_SECONDS,
+            not_comparable_reason=None if day_change_comparable else _FX_DAY_CHANGE_REASON,
         ),
         FieldSpec(
             "previous_close",
@@ -129,8 +180,12 @@ def _quote_specs() -> tuple[FieldSpec, ...]:
             yh_get=lambda p: p.get("previous_close"),
             tolerance_pct=0.5,
             # The same hazard, one step removed: "previous close" itself rolls
-            # forward when a new session starts.
-            max_skew_seconds=3600.0,
+            # forward when a new session starts, and two prints 30 seconds
+            # apart across that roll are a whole session apart in meaning.
+            # No age ceiling here: a previous close is not re-derived from the
+            # print, so a quote that is merely old does not make it wrong.
+            max_skew_seconds=SKEW_LIMIT_SECONDS,
+            session_boundary=True,
         ),
         FieldSpec(
             "week_52_high",
@@ -167,7 +222,9 @@ def _quote_specs() -> tuple[FieldSpec, ...]:
             tolerance_pct=1.0,
             # Volume accumulates through a session; a partial session and a
             # full one are not the same measurement.
-            max_skew_seconds=3600.0,
+            max_skew_seconds=SKEW_LIMIT_SECONDS,
+            session_boundary=True,
+            max_age_seconds=MAX_SESSION_AGE_SECONDS,
         ),
     )
 
@@ -183,7 +240,10 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
     cross-check is real. Price, change, previous close, 52-week range, P/E, RSI
     and volume are compared field by field; Finviz's deeper fundamentals, the
     84-field snapshot, company profile, peers and after-hours print, ride
-    along, each labelled with the provider that supplied it.
+    along, each labelled with the provider that supplied it. A field that
+    cannot be shown to describe the same observation is reported as
+    ``not_comparable`` rather than as a conflict, and an FX day change is never
+    compared because spot FX has no single official previous close.
 
     Symbols are resolved dynamically per provider, so ``XAUUSD`` reaches
     TradingView as ``OANDA:XAUUSD``, Yahoo as ``XAUUSD=X``, and Finviz is told
@@ -284,10 +344,17 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
 
     return finalize(
         pair,
-        specs=_quote_specs(),
+        # FX has no shared previous close, so its day change is reported from
+        # every provider but never compared. Everything else is compared.
+        specs=_quote_specs(
+            day_change_comparable=not _is_fx(tv_res, fv_res, yh_res)
+        ),
         tv_norm=tv_norm,
         fv_norm=fv_norm,
         yh_norm=yh_norm,
+        # The only tool that compares session-relative fields, so the only one
+        # that needs a reference clock for the frozen-feed ceiling.
+        now=datetime.now(timezone.utc),
         sources={
             TRADINGVIEW: "scanner.tradingview.com",
             FINVIZ: f"https://finviz.com/stock?t={fv_res.symbol or to_finviz(ticker)}"
@@ -319,7 +386,9 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
 
     Returns:
         Envelope whose ``data`` is a list of rows, each with ``symbol``,
-        ``price``, ``change_percent`` and its own ``data_provider``.
+        ``price``, ``change_percent`` and its own ``data_provider``. On an FX
+        symbol the day change is reported but not compared, because spot FX has
+        no single official previous close.
     """
     requested = [t.strip().upper() for t in tickers.split(",") if t.strip()]
     if not requested:
@@ -440,6 +509,15 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
             {p: r.get("change_percent") for p, r in readings.items()},
             tolerance_pct=2.0,
             absolute_floor=0.05,
+            # Same rule as ``stock_quote``: an FX day change has no shared
+            # baseline, so it is reported but never called a conflict.
+            not_comparable_reason=(
+                _FX_DAY_CHANGE_REASON
+                if _is_fx(
+                    entry["TRADINGVIEW"], entry["FINVIZ"], entry["YAHOO"]
+                )
+                else None
+            ),
         )
         agree = price_cmp["match"] is not False and change_cmp["match"] is not False
 
@@ -618,7 +696,7 @@ async def stock_screener(
                 TRADINGVIEW: tv_stamp,
                 FINVIZ: (fv_row or {}).get("last_update"),
             },
-            max_skew_seconds=3600.0 if tv_stamp else None,
+            max_skew_seconds=SKEW_LIMIT_SECONDS if tv_stamp else None,
             require_all_times=True,
         )
         answered = [
@@ -767,7 +845,8 @@ async def market_indices() -> dict[str, Any]:
             # reports a data conflict where there is only a fast market.
             tolerance_pct=3.0 if canonical == "VIX" else 0.5,
             times=stamps,
-            max_skew_seconds=3600.0,
+            max_skew_seconds=SKEW_LIMIT_SECONDS,
+            session_boundary=True,
         )
         indices[canonical] = {
             "name": fv_row.get("name") or tv_row.get("name") or canonical,

@@ -69,6 +69,22 @@ def test_parses_compact_finviz_index_date():
     )
 
 
+def test_parses_compact_index_date_sent_as_an_integer():
+    """Finviz's indices feed sends ``last_update`` as a number, not a string.
+
+    Read as epoch seconds, ``20261105`` lands in 1970 and silently dates every
+    index print to the wrong year, which then makes every cross-provider
+    session check fail.
+    """
+    assert parse_market_timestamp(20261105) == datetime(
+        2026, 11, 5, tzinfo=timezone.utc
+    )
+    # A real epoch second is still an epoch second.
+    assert parse_market_timestamp(1793739601) == datetime(
+        2026, 11, 3, 21, 0, 1, tzinfo=timezone.utc
+    )
+
+
 def test_resolves_today_and_yesterday_tokens():
     today = parse_market_timestamp("Today 09:00AM ET", reference=REFERENCE)
     yesterday = parse_market_timestamp("Yesterday 09:00AM ET", reference=REFERENCE)

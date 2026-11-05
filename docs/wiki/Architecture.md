@@ -140,10 +140,13 @@ which reading a field resolves to. If comparison semantics lived in each tool, `
 `market_indices` would drift apart.
 
 It also owns the distinction between a *disagreement* and a *non-comparison*. `compare_values`
-accepts observation times and a `max_skew_seconds`; a session-relative field whose readings are an
-hour apart is reported as `not_comparable` with the gap in the reason, rather than as a conflict.
-`require_all_times` extends the same principle: if a provider reports no print time at all, the match
-cannot be *proven*, so it is not asserted.
+accepts observation times plus guards (`max_skew_seconds`, `session_boundary`, `max_age_seconds`);
+a session-relative field whose readings cannot be shown to describe the same observation is reported
+as `not_comparable` with the reason, rather than as a conflict. `require_all_times` extends the same
+principle: if a provider reports no print time at all, the match cannot be *proven*, so it is not
+asserted. `not_comparable_reason` covers the remaining case where no timestamp check helps: a field
+with no shared definition, such as an FX day change, which is reported from every provider and never
+judged.
 
 ### `freshness.py` decides *which* number
 

@@ -21,7 +21,8 @@ Quote plus fundamentals snapshot for any instrument class, equity, index, FX, co
 | Providers | TradingView scanner · Finviz quote page · Yahoo chart API |
 | Compared | price, change %, previous close, volume, 52-week high/low, P/E, RSI(14) |
 | Tolerances | price/prev-close/52w 0.5 % · change % 2 % · P/E 2 % · RSI 5 % · volume 1 % |
-| Session-relative | change %, previous close, volume (`max_skew_seconds = 3600`) |
+| Session-relative | change %, previous close, volume (`max_skew_seconds = 900`, same session date); change % and volume also carry an 8 h age ceiling |
+| Never compared | change % on FX, where no shared previous close exists (reported from every provider) |
 
 Each compared field resolves to one value, the newest print, while every reading stays in
 `comparisons`. Finviz-only material rides along, labelled per field in `fields`: the 84-field
@@ -39,7 +40,8 @@ Bulk quotes for a ticker list.
 Each row carries its own `data_provider`, `providers_answered` and an `agrees` flag, one ticker can
 be `ALL` while another is single-source or `NONE` in the same response. Multi-source rows also carry
 `price_source` (whose print the single `price` came from) and their own `comparisons` and `freshness`
-blocks. Rows where every provider came up empty carry a `misses` map explaining why.
+blocks. Rows where every provider came up empty carry a `misses` map explaining why. The FX day
+change is reported but never compared, exactly as in `stock_quote`.
 
 ### `stock_screener`
 
@@ -71,7 +73,7 @@ S&P 500, Dow, Nasdaq Composite, Russell 2000, IWM and VIX levels, keyed by canon
 
 Each level resolves by the same newest-print rule as a quote, and levels are only compared between
 providers whose prints share a session. A provider that has rolled into the next session is *newer*
-not wrong; its level is the one shown, and the one-hour-skew guard keeps yesterday's close from being
+not wrong; its level is the one shown, and the session-date guard keeps yesterday's close from being
 reported as a data conflict.
 
 Finviz quotes indices only through its indices feed, not a per-ticker page, `/stock?t=SPX` is a 404
@@ -233,7 +235,7 @@ Yahoo. It is the scan/analysis endpoints that are TradingView-only.
 | You want | Use | Multi-source? |
 | --- | --- | --- |
 | One stock's price and fundamentals | `stock_quote` | Yes, on the quote fields |
-| A crypto or FX quote | `stock_quote` | Yes where both carry it |
+| A crypto or FX quote | `stock_quote` | Yes where both carry it (FX day change excepted) |
 | Many stocks' prices | `stock_prices` | Per row |
 | A market scan | `stock_screener` | On price, per row |
 | Index levels | `market_indices` | Yes |

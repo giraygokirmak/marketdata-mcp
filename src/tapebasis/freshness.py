@@ -19,7 +19,7 @@ arbitration"), never to an exception or a wrong ordering.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 #: Finviz renders US market times and labels them ``ET``. Resolving that to a
 #: real zone matters twice a year: a fixed -05:00 would be an hour wrong
@@ -97,13 +97,20 @@ def parse_market_timestamp(
     if isinstance(raw, datetime):
         return raw.astimezone(timezone.utc) if raw.tzinfo else _to_eastern(raw).astimezone(timezone.utc)
 
-    if isinstance(raw, (int, float)):
-        try:
-            return datetime.fromtimestamp(float(raw), tz=timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return None
-
-    text = str(raw).strip()
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        # A 8-digit integer like ``20261105`` is a compact date, not an epoch
+        # second (which would land in 1970). Finviz's indices feed sends the
+        # calendar date as a number, and reading it as an epoch silently dates
+        # every index print to 1970, which is worse than "unknown".
+        if isinstance(raw, int) and len(str(abs(raw))) == 8:
+            text = str(raw)
+        else:
+            try:
+                return datetime.fromtimestamp(float(raw), tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+    else:
+        text = "" if raw is None or raw == "" else str(raw).strip()
     if not text:
         return None
 
@@ -180,6 +187,33 @@ def parse_market_timestamp(
         return wall.astimezone(timezone.utc)
 
     return None
+
+
+def session_date(moment: datetime | None) -> date | None:
+    """Calendar date of a print in US/Eastern, the session key for US markets.
+
+    Two prints with different session dates belong to different sessions *for
+    US equities*, which is what makes this a sound test for a session-relative
+    field: a previous close, a day change, an accumulated volume.
+
+    Two honest limits, both deliberate:
+
+    * It is a date, not a session. FX rolls at 17:00 ET, not at midnight, so two
+      prints 30 seconds apart across midnight ET get different dates while
+      belonging to the same FX trading day. The caller therefore treats a
+      mismatch as ``not comparable`` and never as a disagreement, so this can
+      lose a comparison but can never invent a conflict.
+    * It is single-market. A JST or CET instrument's session can straddle ET
+      midnight the other way. Same conservative outcome.
+
+    Used only to *narrow* what gets compared, never to order readings.
+    """
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    eastern = moment.astimezone(_EASTERN) if _EASTERN is not None else moment
+    return eastern.date()
 
 
 def freshest(*readings: tuple[str, datetime | None]) -> str | None:

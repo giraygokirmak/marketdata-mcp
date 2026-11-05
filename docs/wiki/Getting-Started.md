@@ -108,7 +108,7 @@ tapebasis_tool_map()           # what is multi-sourced, before calling anything
     "YAHOO": { "symbol": "AAPL", "method": "alias" }
   },
   "warnings": [
-    "Not cross-checked (providers' prints belong to different sessions): change_percent, previous_close, volume"
+    "Not cross-checked (no shared basis for comparison): change_percent, previous_close, volume"
   ],
   "degraded": false
 }

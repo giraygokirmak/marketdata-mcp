@@ -71,8 +71,9 @@ rm ~/.tapebasis/health_state.json     # only after fixing the parser
 3. Compare against `tolerance_pct` for that field.
 4. Within tolerance → `match: true`, no warning. Normal.
 5. Beyond tolerance → `match: false`, named in `notice` and `warnings`.
-6. `match: null` with `not_comparable: true` → the readings describe different sessions, so they were
-   not judged at all.
+6. `match: null` with `not_comparable: true` → the readings were not judged at all. The reason in
+   `pairs[].not_comparable` says which: different session dates, a print past the age ceiling, no
+   print time to prove the observation, or a field with no shared definition (FX day change).
 
 **Check `sources` before assuming a bug.** Each label names the upstream that leg actually called:
 TradingView's scanner, finviz.com, and query1.finance.yahoo.com. A closed market should agree to the
@@ -87,11 +88,15 @@ If a mismatch is systematic on one field, the tolerance may be wrong. See
 
 **Expected**, and not a defect. Those fields are measured against the previous close of the session
 the print belongs to. Finviz mid-session and Yahoo at the prior close answer two different questions,
-so the pair is excluded from the agreement decision with the hour gap recorded in
+so the pair is excluded from the agreement decision with the reason recorded in
 `pairs[].not_comparable`.
 
 The price itself is still compared, because a price stays comparable across minutes. If you need a
-like-for-like day change, compare providers whose `freshness` timestamps are within the hour.
+like-for-like day change, compare providers whose `freshness` timestamps share a session date and are
+within 15 minutes of each other.
+
+On FX this is permanent, not a timing accident: spot FX has no single official previous close, so
+`change_percent` is never compared there. The reading from every provider is still reported.
 
 ---
 

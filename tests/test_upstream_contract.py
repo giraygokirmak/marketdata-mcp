@@ -201,7 +201,7 @@ def test_session_relative_field_is_not_a_conflict_across_sessions():
             TRADINGVIEW: "2026-11-04T00:59:53+00:00",
             FINVIZ: "2026-11-04T10:28:00+00:00",
         },
-        max_skew_seconds=3600.0,
+        max_skew_seconds=900.0,
     )
     assert row["match"] is None
     assert row["not_comparable"] is True
@@ -219,7 +219,7 @@ def test_same_session_readings_are_still_compared():
             TRADINGVIEW: "2026-11-03T20:59:00+00:00",
             FINVIZ: "2026-11-03T21:00:00+00:00",
         },
-        max_skew_seconds=3600.0,
+        max_skew_seconds=900.0,
     )
     assert row["match"] is True
 
@@ -236,7 +236,7 @@ def test_price_is_compared_across_minutes():
             TRADINGVIEW: "2026-11-03T20:59:00+00:00",
             FINVIZ: "2026-11-03T21:00:00+00:00",
         },
-        max_skew_seconds=3600.0,
+        max_skew_seconds=900.0,
     )
     assert row["match"] is True
 
@@ -271,7 +271,7 @@ def test_not_comparable_is_reported_but_not_counted_as_disagreement():
                 "change_percent",
                 lambda p: p["change_percent"],
                 lambda p: p["change_percent"],
-                max_skew_seconds=3600.0,
+                max_skew_seconds=900.0,
             ),
         ),
         times={
@@ -283,6 +283,157 @@ def test_not_comparable_is_reported_but_not_counted_as_disagreement():
     assert merged.not_comparable == ["change_percent"]
     # The newest provider's value is still the one served.
     assert merged.data["change_percent"] == 0.27
+
+
+def test_session_roll_is_caught_even_when_prints_are_seconds_apart():
+    """Seconds-based skew cannot see a session roll; the session date can.
+
+    Two prints 30 seconds apart across midnight US/Eastern are a whole session
+    apart in meaning for a day change, and pass any ``max_skew_seconds`` test.
+    """
+    from tapebasis.reconcile import FINVIZ, TRADINGVIEW, compare_values
+
+    row = compare_values(
+        # 2026-11-04T04:59:40Z == 23:59:40 ET on Nov 3
+        # 2026-11-04T05:00:10Z == 00:00:10 ET on Nov 4
+        {TRADINGVIEW: -1.9, FINVIZ: -1.88},
+        tolerance_pct=2.0,
+        times={
+            TRADINGVIEW: "2026-11-04T04:59:40+00:00",
+            FINVIZ: "2026-11-04T05:00:10+00:00",
+        },
+        max_skew_seconds=900.0,
+        session_boundary=True,
+    )
+    assert row["match"] is None
+    assert row["not_comparable"] is True
+    assert "different sessions" in row["pairs"][0]["not_comparable"]
+
+
+def test_session_boundary_is_one_way_and_never_invents_a_conflict():
+    """Within one session the same readings are compared normally.
+
+    The guard may lose a comparison, it may never turn agreement into a
+    reported conflict.
+    """
+    from tapebasis.reconcile import FINVIZ, TRADINGVIEW, compare_values
+
+    row = compare_values(
+        {TRADINGVIEW: -1.9, FINVIZ: -1.9},
+        tolerance_pct=2.0,
+        times={
+            TRADINGVIEW: "2026-11-03T20:59:00+00:00",
+            FINVIZ: "2026-11-03T21:00:00+00:00",
+        },
+        max_skew_seconds=900.0,
+        session_boundary=True,
+    )
+    assert row["match"] is True
+    assert not row.get("not_comparable")
+
+
+def test_frozen_feed_is_caught_against_the_clock_not_against_a_peer():
+    """Skew compares providers to each other; only the clock sees both frozen."""
+    from datetime import datetime, timezone
+
+    from tapebasis.reconcile import FINVIZ, TRADINGVIEW, FieldSpec, merge_many
+
+    spec = FieldSpec(
+        "change_percent",
+        lambda p: p["change_percent"],
+        lambda p: p["change_percent"],
+        max_skew_seconds=900.0,
+        session_boundary=True,
+        max_age_seconds=8 * 3600.0,
+    )
+    # Both providers agree and print at the same instant: skew is zero. The
+    # prints are 23 hours old yet still on the same ET session date, so the
+    # clock catches what the peer comparison structurally cannot.
+    merged = merge_many(
+        {TRADINGVIEW: {"change_percent": -1.9}, FINVIZ: {"change_percent": -1.9}},
+        (spec,),
+        times={
+            TRADINGVIEW: "2026-11-03T05:00:00+00:00",  # 00:00 ET Nov 3
+            FINVIZ: "2026-11-03T05:00:05+00:00",
+        },
+        now=datetime(2026, 11, 4, 4, 0, tzinfo=timezone.utc),  # 23:00 ET Nov 3
+    )
+    assert merged.mismatches == []
+    assert merged.not_comparable == ["change_percent"]
+    assert "frozen" in merged.comparisons[0]["pairs"][0]["not_comparable"]
+
+
+def test_age_ceiling_is_inert_across_a_session_boundary():
+    """A quote legitimately ages overnight; a wall-clock ceiling must not fire."""
+    from datetime import datetime, timezone
+
+    from tapebasis.reconcile import FINVIZ, TRADINGVIEW, FieldSpec, merge_many
+
+    spec = FieldSpec(
+        "change_percent",
+        lambda p: p["change_percent"],
+        lambda p: p["change_percent"],
+        max_skew_seconds=900.0,
+        session_boundary=True,
+        max_age_seconds=8 * 3600.0,
+    )
+    # Friday's close read on Sunday: 40 hours old, and correct.
+    merged = merge_many(
+        {TRADINGVIEW: {"change_percent": -1.9}, FINVIZ: {"change_percent": -1.9}},
+        (spec,),
+        times={
+            TRADINGVIEW: "2026-11-06T21:00:00+00:00",
+            FINVIZ: "2026-11-06T21:00:00+00:00",
+        },
+        now=datetime(2026, 11, 8, 13, 0, tzinfo=timezone.utc),
+    )
+    assert merged.not_comparable == []
+    assert merged.comparisons[0]["match"] is True
+
+
+def test_field_without_a_shared_definition_is_never_a_conflict():
+    """FX day change: no single official previous close, so no comparison.
+
+    The readings are kept, the pair is marked not comparable, and the field is
+    never counted as a provider conflict, at any timestamp.
+    """
+    from tapebasis.reconcile import FINVIZ, TRADINGVIEW, compare_values
+
+    row = compare_values(
+        {TRADINGVIEW: 0.0935, FINVIZ: 0.3101},
+        tolerance_pct=2.0,
+        absolute_floor=0.05,
+        times={
+            TRADINGVIEW: "2026-11-05T09:40:28+00:00",
+            FINVIZ: "2026-11-05T09:40:29+00:00",
+        },
+        max_skew_seconds=900.0,
+        session_boundary=True,
+        not_comparable_reason="spot FX has no single official previous close",
+    )
+    assert row["match"] is None
+    assert row["not_comparable"] is True
+    assert row["values"] == {TRADINGVIEW: 0.0935, FINVIZ: 0.3101}
+    assert "previous close" in row["pairs"][0]["not_comparable"]
+
+
+def test_fx_is_detected_from_any_providers_asset_class():
+    from tapebasis.tools_market import _is_fx, _quote_specs
+    from tapebasis.symbols import Resolution
+
+    fx = Resolution(query="EURUSD", provider="TRADINGVIEW", asset_class="forex")
+    yahoo_fx = Resolution(query="EURUSD=X", provider="YAHOO", asset_class="currency")
+    stock = Resolution(query="AAPL", provider="TRADINGVIEW", asset_class="stock")
+
+    assert _is_fx(fx) is True
+    assert _is_fx(stock, yahoo_fx) is True   # Finviz never carries FX
+    assert _is_fx(stock) is False
+
+    fx_spec = next(s for s in _quote_specs(day_change_comparable=False)
+                   if s.name == "change_percent")
+    equity_spec = next(s for s in _quote_specs() if s.name == "change_percent")
+    assert fx_spec.not_comparable_reason
+    assert equity_spec.not_comparable_reason is None
 
 
 # ── snapshot join keys ─────────────────────────────────────────────────────
