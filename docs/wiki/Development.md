@@ -12,7 +12,7 @@ pip install -e ".[dev]"
 ## Tests
 
 ```bash
-pytest                      # 222 hermetic tests, no network
+pytest                      # 233 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 pytest tests/test_reconcile.py -v
 ```
@@ -39,6 +39,7 @@ Finviz page would fail for reasons unrelated to the code.
 | `test_sentiment_tool.py` | Token-free path, backend switching, no fabricated scores |
 | `test_bloomberg.py` | Symbol mapping, `print_time` from the intraday series, sentinel rejection, the fourth-leg tie-break, declared-delay comparability, single-source envelope |
 | `test_server.py` | Tool registration, MCP surface |
+| `test_dockerfile.py` | The deployment contract: `tini` as PID 1, the entrypoint argv, `init: true` in compose |
 
 `test_upstream_contract.py` is the file to extend when live probing finds a provider behaving
 surprisingly. Every case in it was found by calling the real upstream and getting something the

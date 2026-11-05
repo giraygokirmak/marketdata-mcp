@@ -244,6 +244,29 @@ docker compose logs --tail=100 tapebasis
 
 ---
 
+## Container accumulates `<defunct>` processes
+
+**Cause:** the server is PID 1 and Python does not reap children. Docker starts the `HEALTHCHECK`
+and every `docker exec` inside the container's PID namespace with a parent outside it, so those
+processes are reparented to PID 1 and stay as zombies when nothing calls `wait()`.
+
+**Diagnose:**
+
+```bash
+docker top tapebasis -o pid,stat,cmd | head
+docker exec tapebasis ps -eo pid,stat,comm | awk '$2 ~ /Z/'
+```
+
+**Fix:** run under an init. The image already does (its entrypoint is `tini --`), and
+`docker-compose.yml` sets `init: true`. If you built your own image without `tini`, add
+`--init` to `docker run`, or `init: true` to the compose service.
+
+Zombies are not why the container restarts, but a PID 1 that ignores `SIGTERM` turns every stop
+into the 10 s kill timeout and then a hard `SIGKILL`; `tini` forwards the signal so shutdown stays
+graceful.
+
+---
+
 ## `ModuleNotFoundError: tapebasis`
 
 The package is not installed in the interpreter the MCP client uses.

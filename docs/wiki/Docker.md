@@ -1,7 +1,7 @@
 # Docker
 
-The image runs the server over streamable HTTP as a non-root user, with a healthcheck and a named
-volume for state.
+The image runs the server over streamable HTTP as a non-root user, under `tini` as PID 1, with a
+healthcheck and a named volume for state.
 
 ## Prebuilt image (GHCR)
 
@@ -56,13 +56,36 @@ docker run -d --name tapebasis -p 6013:8000 \
 | Stage | Purpose |
 | --- | --- |
 | builder | Upgrades pip/certifi, installs `uv`, installs the package system-wide |
-| runtime | Copies installed site-packages and app source, upgrades pip/certifi again, drops to `mcpuser` |
+| runtime | Copies installed site-packages and app source, upgrades pip/certifi again, installs `tini`, drops to `mcpuser` |
 
 Both stages upgrade `pip` and `certifi` before touching PyPI. This is deliberate: base images built
 before the eMudhra/emSign CA incident (Oct 2026) ship a `certifi` that still trusts the compromised
 chain, and a `pip install` through it would fail or, worse, succeed against the wrong host.
 
 The container runs as `mcpuser`, never root.
+
+## PID 1, zombies and shutdown
+
+The image ships [`tini`](https://github.com/krallin/tini) and uses it as the entrypoint, so the
+server is **not** PID 1:
+
+```
+ENTRYPOINT ["/usr/bin/tini", "--", "tapebasis"]
+```
+
+This is not decoration. Python does not reap children, and Docker starts the `HEALTHCHECK` (and every
+`docker exec`) inside the container's PID namespace with a parent that lives outside it. Those
+processes are reparented to PID 1, and a PID 1 that never calls `wait()` leaves each one behind as a
+zombie: one extra `<defunct>` entry every 30 seconds, forever. `tini` reaps them and forwards
+`SIGTERM` to the server, so `docker stop` still takes uvicorn's graceful path instead of a bare kill
+and a restart loop.
+
+`docker-compose.yml` additionally sets `init: true`, so the same protection applies if you swap the
+image for one that does not bundle `tini`. Running `docker run --init ...` is therefore redundant but
+harmless.
+
+If you build your own image from a different base, either install `tini` the same way or always pass
+`--init`; without one of the two, the container accumulates zombies until it is restarted.
 
 ## Volumes
 

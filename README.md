@@ -418,6 +418,10 @@ docker run -d --name tapebasis -p 6013:8000 \
   tapebasis:latest
 ```
 
+The image runs the server under `tini` as PID 1, so the container reaps the processes Docker starts
+inside its namespace (`HEALTHCHECK`, `docker exec`) instead of accumulating zombies, and `docker stop`
+is a graceful SIGTERM. Compose also sets `init: true`, which covers an image built without `tini`.
+
 ## Configuration
 
 Everything is optional. See [`.env.example`](.env.example) for the full list.
@@ -489,7 +493,7 @@ No proxy configuration exists: every provider reaches its upstream directly.
 
 ```bash
 pip install -e ".[dev]"     # or, with uv: uv venv && uv pip install -e ".[dev]"
-pytest                      # 229 hermetic tests, no network
+pytest                      # 233 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 ```
 
