@@ -18,10 +18,11 @@ Quote plus fundamentals snapshot for any instrument class, equity, index, FX, co
 
 | | |
 | --- | --- |
-| Providers | TradingView scanner · Finviz quote page · Yahoo chart API |
+| Providers | TradingView scanner · Finviz quote page · Yahoo chart API · Bloomberg quote page |
 | Compared | price, change %, previous close, volume, 52-week high/low, P/E, RSI(14) |
 | Tolerances | price/prev-close/52w 0.5 % · change % 2 % · P/E 2 % · RSI 5 % · volume 1 % |
-| Session-relative | change %, previous close, volume (`max_skew_seconds = 900`, same session date); change % and volume also carry an 8 h age ceiling |
+| Observation guards | price, change %, previous close, volume: `max_skew_seconds = 900` and same US/Eastern session date; change % and volume also carry an 8 h age ceiling |
+| Declared delay | Bloomberg's 15-minute equity/index delay is itself a comparability boundary: a pair that far apart is `not_comparable`, with the delay named |
 | Never compared | change % on FX, where no shared previous close exists (reported from every provider) |
 
 Each compared field resolves to one value, the newest print, while every reading stays in
@@ -29,9 +30,15 @@ Each compared field resolves to one value, the newest print, while every reading
 fundamentals snapshot, company profile, peers, and the after-hours print. `resolutions` records the
 ticker each provider was asked for.
 
-Because symbols are resolved per provider, `XAUUSD` reaches `OANDA:XAUUSD` on TradingView, is
-correctly reported as not carried by Yahoo and Finviz, and the response is `TRADINGVIEW` /
-`SINGLE_SOURCE` rather than `NONE`.
+Because symbols are resolved per provider, `XAUUSD` reaches `OANDA:XAUUSD` on TradingView and
+`XAUUSD:CUR` on Bloomberg, is correctly reported as not carried by Yahoo and Finviz, and the response
+is `ALL` over the two that answered rather than `NONE`.
+
+Bloomberg is asked in parallel like the others, so `providers_answered` can hold four labels and
+`comparisons[].values` can hold four readings. Its delayed print is bounded two ways: it is last in
+the freshness tie-break, and a pair a delay length apart is reported as `not_comparable` instead of as
+a disagreement. `exchange_delay` / `print_time` ride along in `data`, so the delay is visible without
+reading the comparison detail.
 
 ### `stock_prices`
 
@@ -42,6 +49,10 @@ be `ALL` while another is single-source or `NONE` in the same response. Multi-so
 `price_source` (whose print the single `price` came from) and their own `comparisons` and `freshness`
 blocks. Rows where every provider came up empty carry a `misses` map explaining why. The FX day
 change is reported but never compared, exactly as in `stock_quote`.
+
+Bloomberg is asked about at most four tickers per call (`TAPEBASIS_BLOOMBERG_BATCH_MAX`), because its
+page path is paced at 10 s per request. The rest are listed in `warnings` and are not counted as
+Bloomberg-answered for those rows: coverage stays truthful per row.
 
 ### `stock_screener`
 
@@ -223,10 +234,10 @@ Yahoo. It is the scan/analysis endpoints that are TradingView-only.
 
 ## Bloomberg-only (2)
 
-Served, labelled `BLOOMBERG`, explicitly single-source. Bloomberg is **not** in `PROVIDER_ORDER`, so
-it never contributes to `ALL` and never appears in `comparisons`: its equity quotes are delayed, its
-static fields duplicate Yahoo's, and its page timestamp is a session sentinel. Both tools return
-`cross_checked: false` and `reconciliation_leg: false`.
+These tools ask Bloomberg and nobody else, so their responses are single-source by construction:
+`data_provider: BLOOMBERG`, `cross_checked: false`, `reconciliation_leg: false`. The provider itself
+is a full fourth leg of `stock_quote` / `stock_prices`, where it is asked in parallel and its readings
+appear in `comparisons`. What these two tools add is Bloomberg's own quote page and its market board.
 
 | Tool | Capability | Notes |
 | --- | --- | --- |
@@ -235,13 +246,13 @@ static fields duplicate Yahoo's, and its page timestamp is a session sentinel. B
 
 ### `bloomberg_quote`
 
-For a corroborated price use `stock_quote`. Use this when the caller wants Bloomberg's reading
-specifically, or a figure only Bloomberg publishes.
+For a corroborated price use `stock_quote`, which asks Bloomberg too and compares it. Use this when
+the caller wants Bloomberg's reading specifically, or a figure only Bloomberg publishes.
 
 | | |
 | --- | --- |
 | Providers | `bloomberg.com/quote/<id>` HTML, `__NEXT_DATA__` payload |
-| Compared | nothing: single-source by design |
+| Compared | nothing: this tool asks one provider |
 | Delay | `exchangeDelay` (15 Minutes on equities), echoed as `exchange_delay` / `is_exchange_delayed` |
 | Print time | `priceMovements1Day[-1].dateTime`, and only when that point's value matches the quoted price |
 | Never used | `lastUpdate`, a session sentinel (`...T01:00:00Z`) that is later than the real print |
@@ -283,7 +294,7 @@ as a snapshot, not a live tape.
 | Options positioning | `stock_options_chain` | On volume/OI |
 | Filings, ownership, peers | `stock_filings`, `stock_ownership`, `stock_peers` | No |
 | Government bond yields | `bloomberg_markets` | No, Bloomberg-only |
-| Bloomberg's own quote reading | `bloomberg_quote` | No, and delay-labelled |
+| Bloomberg's own quote reading | `bloomberg_quote` | No: one provider asked, delay-labelled |
 | Crypto / futures scans | `crypto_*`, `futures_*` | No |
 | Strategy validation | `stock_backtest`, `stock_backtest_compare` | Yes, two OHLCV feeds |
 | Everything about one stock | `combined_analysis` | Price leg only |

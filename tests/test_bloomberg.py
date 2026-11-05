@@ -2,10 +2,13 @@
 
 The important properties pinned here:
 
-* Bloomberg is a label, not a reconciliation leg: it must stay out of
-  ``PROVIDER_ORDER``, so it can never inflate ``ALL`` / ``MULTI_SOURCE``.
+* Bloomberg is a full fourth leg: it is in ``PROVIDER_ORDER``, so it can
+  contribute to ``ALL`` / ``MULTI_SOURCE``, and last in the tie-break order
+  because its prints can be structurally older.
 * The print time comes from the intraday series, never from ``lastUpdate``,
   which is a session sentinel on equity pages.
+* A delayed print is reported as *not comparable* rather than as a
+  disagreement, and the reason names the delay.
 * A page that exists but carries no price is ``NONE`` with a reason, not a
   number.
 """
@@ -15,6 +18,7 @@ import pytest
 
 from tapebasis import bb_access, tools_bloomberg
 from tapebasis.providers_state import DataProvider, PROVIDER_ORDER, Verification
+from tapebasis.reconcile import DEFAULT_ORDER, compare_values
 
 
 def _equity_quote(**overrides):
@@ -67,9 +71,47 @@ def _board():
 # ── the label contract ───────────────────────────────────────────────────────
 
 
-def test_bloomberg_is_a_label_but_not_a_reconciliation_leg():
+def test_bloomberg_is_the_fourth_leg_and_loses_any_tie_break():
     assert DataProvider.BLOOMBERG.value == "BLOOMBERG"
-    assert "BLOOMBERG" not in PROVIDER_ORDER
+    assert "BLOOMBERG" in PROVIDER_ORDER
+    # Last, because a delayed page must never outrank a live feed on a tie.
+    assert PROVIDER_ORDER[-1] == "BLOOMBERG"
+    assert DEFAULT_ORDER[-1] == "BLOOMBERG"
+
+
+def test_a_delayed_print_is_not_comparable_not_a_disagreement():
+    """15 minutes apart is a different observation, and the reason says why."""
+    row = compare_values(
+        {"TRADINGVIEW": 349.51, "BLOOMBERG": 348.2},
+        times={
+            "TRADINGVIEW": "2026-11-05T14:00:00+00:00",
+            "BLOOMBERG": "2026-11-05T13:45:00+00:00",
+        },
+        max_skew_seconds=900.0,
+        session_boundary=True,
+    )
+    assert row["match"] is None
+    assert row["not_comparable"] is True
+    reason = row["pairs"][0]["not_comparable"]
+    assert "do not describe the same observation" in reason
+    assert "exchange-delayed" in reason
+    # Both readings stay visible: the delay hides neither number.
+    assert row["values"] == {"TRADINGVIEW": 349.51, "BLOOMBERG": 348.2}
+
+
+def test_a_closed_market_lets_bloomberg_agree_with_the_others():
+    """At the close there is one print instant, so the leg is comparable."""
+    row = compare_values(
+        {"TRADINGVIEW": 349.51, "BLOOMBERG": 349.51},
+        times={
+            "TRADINGVIEW": "2026-11-04T20:58:30+00:00",
+            "BLOOMBERG": "2026-11-04T20:58:00+00:00",
+        },
+        max_skew_seconds=900.0,
+        session_boundary=True,
+    )
+    assert row["match"] is True
+    assert not row.get("not_comparable")
 
 
 # ── symbol resolution ────────────────────────────────────────────────────────
@@ -186,6 +228,8 @@ async def test_quote_envelope_is_single_source_bloomberg(monkeypatch):
     assert response["verification"] == Verification.SINGLE_SOURCE.value
     assert response["providers_answered"] == ["BLOOMBERG"]
     assert response["cross_checked"] is False
+    # False describes this call (one provider asked), not the provider's
+    # standing: stock_quote does compare Bloomberg with the other three.
     assert response["reconciliation_leg"] is False
     assert "single-source" in response["notice"].lower()
     assert response["data"]["price"] == 349.51

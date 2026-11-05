@@ -1,19 +1,21 @@
-"""Bloomberg tools, served from bloomberg.com and explicitly single-source.
+"""Bloomberg-only tools: one provider answered, and the response says so.
 
-Bloomberg is not a reconciliation leg, and these tools do not pretend
-otherwise. Every response is labelled ``BLOOMBERG`` with
-``verification: SINGLE_SOURCE``, because Bloomberg would not strengthen a
-cross-check even if it were asked to join one:
+Bloomberg is also a full reconciliation leg: ``stock_quote`` and ``stock_prices``
+ask it in parallel with TradingView, Finviz and Yahoo, and its readings appear
+in their ``comparisons``. These two tools are the other case: a caller asks
+Bloomberg directly, nobody else is queried, so the envelope is labelled
+``BLOOMBERG`` with ``verification: SINGLE_SOURCE`` and ``cross_checked: false``.
 
-* equity quotes there are delayed (``exchangeDelay`` is ``15 Minutes``),
-* its static fields are penny-identical to Yahoo's, so it is not an independent
-  reading of the same number,
-* its ``lastUpdate`` is a session sentinel, so using it as a print time would
-  make a stale page look fresher than a live print.
+The two properties that shape the payload:
 
-What it does add is data no other provider here publishes: the government
-benchmark yield curve, plus index, commodity and FX levels on the same board.
-That is why it earns a label of its own instead of being folded into ``ALL``.
+* equity and index quotes are exchange-delayed (``exchangeDelay`` is
+  ``15 Minutes``), so ``exchange_delay`` travels with the number and the
+  notice warns against presenting it as a live price,
+* ``lastUpdate`` is a session sentinel, so ``print_time`` is derived from the
+  last intraday point and is null when that point does not match the price.
+
+What these tools add beyond the cross-checked ones is the government benchmark
+yield curve, which no other provider here publishes.
 """
 from __future__ import annotations
 
@@ -23,9 +25,9 @@ from . import bb_access
 from .health import MONITOR
 from .providers_state import DataProvider, NoDataError, envelope, error_code
 
-#: Bloomberg is outside the reconciliation set, so no health probe exists for
-#: it (httpx cannot reproduce the TLS fingerprint that gets past the bot wall).
-#: Callers are told that, instead of being handed a silent "OK".
+#: There is no health probe for Bloomberg: httpx cannot reproduce the TLS
+#: fingerprint that gets past the bot wall, so a probe would report a false
+#: outage. Callers are told that, instead of being handed a silent "OK".
 _NO_PROBE = (
     "Bloomberg is not covered by the upstream health monitor: its site gates "
     "plain HTTP clients on the TLS fingerprint, so an httpx probe would report a "
@@ -49,6 +51,9 @@ def _label(
         warnings=[_NO_PROBE, *(warnings or [])],
         providers_answered=[bb_access.PROVIDER],
         extra={
+            # This *response* was not reconciled with another provider. The
+            # provider itself does join the comparison inside ``stock_quote``;
+            # these fields describe the call, not the provider's standing.
             "cross_checked": False,
             "reconciliation_leg": False,
             **(extra or {}),
@@ -75,9 +80,9 @@ def _failed(exc: BaseException, *, extra: dict[str, Any] | None = None) -> dict[
 async def bloomberg_quote(symbol: str) -> dict[str, Any]:
     """Bloomberg's own quote page for one instrument (single-source).
 
-    Ask for this when the caller wants Bloomberg's reading specifically. For a
-    corroborated price, use ``stock_quote``: Bloomberg's equity quotes are
-    delayed and are not counted as an independent cross-check here.
+    This tool asks only Bloomberg, so the response is single-source even though
+    the provider is a full leg of ``stock_quote``. Ask for it when the caller
+    wants Bloomberg's reading specifically, or a figure only Bloomberg carries.
 
     ``print_time`` comes from the last intraday point, never from
     ``lastUpdate``, which is a session sentinel on equity pages. When the
@@ -92,8 +97,9 @@ async def bloomberg_quote(symbol: str) -> dict[str, Any]:
 
     Returns:
         Envelope labelled ``BLOOMBERG`` / ``SINGLE_SOURCE`` whose ``data``
-        carries the price, day change, ranges, volume, ratios and the delay
-        fields ``exchange_delay`` / ``is_exchange_delayed``.
+        carries the price, day change, ranges, volume, ratios, the derived
+        ``print_time`` and the delay fields ``exchange_delay`` /
+        ``is_exchange_delayed``.
     """
     try:
         data, source = await bb_access.quote(symbol)
@@ -144,7 +150,7 @@ async def bloomberg_markets() -> dict[str, Any]:
 
 
 _TOOLS = (
-    (bloomberg_quote, "Bloomberg-only: quote page (single-source, delayed)"),
+    (bloomberg_quote, "Bloomberg-only: quote page (single-source call, delay-labelled)"),
     (bloomberg_markets, "Bloomberg-only: index, government yield, commodity and FX board"),
 )
 

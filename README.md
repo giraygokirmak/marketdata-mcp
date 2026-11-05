@@ -2,10 +2,9 @@
 
 <img src="docs/logo.svg" alt="Tapebasis" width="360">
 
-**Multiple tapes, one basis.** An MCP server that serves **TradingView**, **Finviz** and **Yahoo Finance**
-market data together, cross-checks every overlapping figure, and labels each response with the
-provider that actually produced it. **Bloomberg** is served too, as an explicitly single-source
-provider for the data nobody else here carries.
+**Multiple tapes, one basis.** An MCP server that serves **TradingView**, **Finviz**, **Yahoo Finance**
+and **Bloomberg** market data together, cross-checks every overlapping figure, and labels each
+response with the provider that actually produced it.
 
 </div>
 
@@ -21,15 +20,19 @@ clearly marked as single-source. When none answers, you get `NONE` instead of a
 plausible-looking number. And because every provider scrapes or calls an undocumented upstream, a
 background monitor probes every endpoint and reports API/schema drift inside ordinary tool responses.
 
-Each provider is genuinely independent: TradingView's own scanner and chart websocket, Finviz's HTML
-and JSON islands, Yahoo's chart API. No leg proxies another: a provider that quietly forwards a
-competitor's numbers is worthless as a cross-check.
+Each provider is fetched natively: TradingView's own scanner and chart websocket, Finviz's HTML and
+JSON islands, Yahoo's chart API, Bloomberg's quote pages. No leg proxies another: a provider that
+quietly forwards a competitor's numbers is worthless as a cross-check.
 
-Bloomberg is the deliberate exception to "more providers is better". Its equity quotes are delayed,
-its static fields duplicate Yahoo's, and its page timestamp is a session sentinel, so counting it as
-a fourth independent leg would inflate `MULTI_SOURCE` rather than support it. It is therefore served
-[as single-source only](#bloomberg-only-served-labelled-bloomberg-never-a-fourth-leg), for the government
-benchmark yield curve and its own quote pages, and it never contributes to `ALL`.
+Bloomberg is the fourth leg and it is asked like the others, in parallel, on the same call. Two of its
+properties are reported rather than hidden by a tolerance. Its equity and index prints are
+exchange-delayed (`exchangeDelay` is `15 Minutes`), so a pair of prints further apart than the
+print-time guard allows is reported as **not comparable** with the delay named, instead of being
+called a provider disagreement; it also never wins the freshness tie-break against a live print. And
+its static fields are penny-identical to Yahoo's, so agreement between those two is weak corroboration,
+not two independent witnesses. What it adds is its own quote pages and the
+[government benchmark yield curve](#bloomberg-only-tools-labelled-bloomberg-single-source-by-construction),
+which no other provider here publishes.
 
 [![Tests](https://github.com/giraygokirmak/tapebasis/actions/workflows/test.yml/badge.svg)](https://github.com/giraygokirmak/tapebasis/actions/workflows/test.yml)
 [![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-3776ab)](https://github.com/giraygokirmak/tapebasis)
@@ -47,7 +50,7 @@ Every tool result carries exactly one of six values. It states **coverage**, nev
 | `TRADINGVIEW` | Only TradingView answered. Served, but **not** corroborated.               |
 | `FINVIZ`      | Only Finviz answered. Served, but **not** corroborated.                    |
 | `YAHOO`       | Only Yahoo Finance answered. Served, but **not** corroborated.             |
-| `BLOOMBERG`   | Only Bloomberg answered. Single-source by design, never cross-checked.     |
+| `BLOOMBERG`   | Only Bloomberg answered. Served, but **not** corroborated; its quote can be delayed. |
 | `NONE`        | No provider could supply it. No value is presented.                        |
 
 `ALL` means "every provider asked answered", not "they agree". Agreement is a separate axis, and it
@@ -60,7 +63,7 @@ The same envelope also contains:
 {
   "data_provider": "ALL",
   "verification": "MULTI_SOURCE",        // MULTI_SOURCE | SINGLE_SOURCE | UNAVAILABLE
-  "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO"],
+  "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO"],   // + "BLOOMBERG" when it answers
   "notice": "Every provider asked answered (TradingView, Finviz and Yahoo Finance). ...",
   "data": { ... },                       // the reconciled payload, one value per field
   "fields": { "price": "ALL", "peers": "FINVIZ" },   // per-field provenance
@@ -68,6 +71,7 @@ The same envelope also contains:
     "tradingview": "2026-11-04T00:59:53+00:00",
     "finviz": "2026-11-04T10:42:00+00:00",
     "yahoo": "2026-11-03T21:00:01+00:00",
+    "bloomberg": "2026-11-04T10:27:00+00:00",   // 15 min behind, so it cannot win
     "chosen": "FINVIZ",
     "decision": "newest",                // newest | tie | no_timestamp
     "newest_print": "2026-11-04T10:42:00+00:00",
@@ -92,7 +96,8 @@ The same envelope also contains:
 **One price, and it is the newest print.** Every provider that can supply a field is asked. `data`
 holds exactly one value per compared field: the reading whose market print is newest. Providers that
 share the newest instant are the only tie-break candidates, and the documented default order
-(`FINVIZ`, `TRADINGVIEW`, `YAHOO`) picks between them. `freshness.decision` is the machine-readable
+(`FINVIZ`, `TRADINGVIEW`, `YAHOO`, `BLOOMBERG`) picks between them; Bloomberg is last precisely
+because its print can be structurally older. `freshness.decision` is the machine-readable
 outcome (`newest`, `tie`, `no_timestamp`), so a caller never has to parse the sentence in `reason`.
 Every original reading stays in `comparisons.values`.
 
@@ -105,10 +110,12 @@ print, and the notice says so.
 percentage or a session volume is derived from the previous close of the session the print belongs
 to. Finviz in a pre-market session and Yahoo at the prior close will legitimately differ, so such a
 pair is reported as `not_comparable` (with the reason in `pairs[].not_comparable`) instead of being
-called a provider conflict. Three guards decide that: a 900 s print-time ceiling, equality of the
-US/Eastern session date even when the prints are seconds apart, and, for the fields re-derived from
-the print, an 8 h age ceiling against the clock so a feed that froze with its peers cannot pass.
-Both readings still appear; the field is listed in `warnings` as not cross-checked.
+called a provider conflict. Four guards decide that: a 900 s print-time ceiling, equality of the
+US/Eastern session date even when the prints are seconds apart, a declared feed delay as a boundary
+of its own (Bloomberg states 15 minutes on equities, so its pairs stop being comparable at that
+distance), and, for the fields re-derived from the print, an 8 h age ceiling against the clock so a
+feed that froze with its peers cannot pass. Both readings still appear; the field is listed in
+`warnings` as not cross-checked.
 
 **Some fields have no shared definition at all.** Spot FX has no single official previous close, so
 each provider derives its own daily roll and the day-change figures answer different questions. On
@@ -143,8 +150,9 @@ rules keep it honest:
 - **A missing instrument is not an outage.** `NotApplicable` becomes `NOT_ATTEMPTED`, which is
   excluded from `errors`. "Finviz does not carry spot gold" is a structural fact, not a failure.
 
-XAUUSD, for example, resolves to `OANDA:XAUUSD` for TradingView and nothing for the other two, so the
-response is `TRADINGVIEW` / `SINGLE_SOURCE`, served and clearly labelled, not hidden.
+XAUUSD, for example, resolves to `OANDA:XAUUSD` for TradingView, `XAUUSD:CUR` for Bloomberg and
+nothing for the other two, so the response is `ALL` over the two that answered, served and clearly
+labelled, not hidden.
 
 ---
 
@@ -154,7 +162,7 @@ response is `TRADINGVIEW` / `SINGLE_SOURCE`, served and clearly labelled, not hi
 
 | Tool | Providers | Fields cross-checked |
 | --- | --- | --- |
-| `stock_quote` | all | price, change %, previous close, 52-w high/low, P/E, RSI(14), volume |
+| `stock_quote` | all four | price, change %, previous close, 52-w high/low, P/E, RSI(14), volume |
 | `stock_prices` | all | price and change % per ticker (per-row `data_provider`) |
 | `stock_screener` | TradingView + Finviz | per-row price for the tickers both return |
 | `market_indices` | all | S&P 500, Dow, Nasdaq Composite, Russell 2000, VIX levels |
@@ -193,26 +201,47 @@ and the notice states the data is not cross-checked.
 `market_sentiment` is single-source too, but which source depends on the environment, see
 [Sentiment](#sentiment-no-api-key-required).
 
-### Bloomberg-only, served, labelled `BLOOMBERG`, never a fourth leg
+### Bloomberg-only tools, labelled `BLOOMBERG`, single-source by construction
 
 `bloomberg_quote` · `bloomberg_markets`
 
-Bloomberg is a provider with its own label, but it is **outside the reconciliation set**: it is not in
-`PROVIDER_ORDER`, so it cannot contribute to `ALL` and never appears in `comparisons`. The reason is
-measured, not stylistic:
+These two tools ask Bloomberg and nobody else, so their responses are single-source: `data_provider:
+BLOOMBERG`, `cross_checked: false`, `reconciliation_leg: false`. The provider itself is a full fourth
+leg of `stock_quote` and `stock_prices`, where it is asked in parallel and its readings appear in
+`comparisons` (see below). The distinction is the call, not the provider.
 
-- equity quotes there are delayed (`exchangeDelay` reads `15 Minutes`), so they cannot arbitrate a
-  live print;
-- its static fields are penny-identical to Yahoo's, so it is not an independent reading of them;
-- `lastUpdate` is a session sentinel (`2026-11-05T01:00:00.000Z` on a page whose print was
-  `2026-11-04T20:58:00Z`), so using it as a print time would make a stale page win a freshness
-  comparison. `bloomberg_quote` therefore takes `print_time` from the last intraday point and
-  reports `print_time_missing_reason` when that point does not match the quoted price.
+What these tools add is the government benchmark yield curve plus index, commodity and FX levels on
+one board, which no other provider here publishes. `bloomberg_markets` says plainly that the board
+carries no per-instrument print time, so nothing there is aged or ordered.
 
-What it adds is the government benchmark yield curve plus index, commodity and FX levels on one
-board, which no other provider here publishes. `bloomberg_markets` says plainly that the board carries
-no per-instrument print time, so nothing there is aged or ordered. Both tools return
-`cross_checked: false` and `reconciliation_leg: false`.
+`bloomberg_quote` serves one page and discloses what that page is: `exchange_delay` /
+`is_exchange_delayed` state the delay, and `print_time` comes from the last intraday point, never from
+`lastUpdate` (`2026-11-05T01:00:00.000Z` on a page whose print was `2026-11-04T20:58:00Z`, which would
+make a stale page win a freshness comparison). When that point does not match the quoted price,
+`print_time` is null and `print_time_missing_reason` says why.
+
+### Bloomberg as the fourth leg
+
+In `stock_quote` and `stock_prices` Bloomberg is asked in parallel with the other three, contributes
+to `ALL` / `providers_answered`, and its reading sits in `comparisons[].values`. Three facts keep that
+honest:
+
+- **Delay is a comparability boundary, not a tolerance.** `exchangeDelay` reads `15 Minutes` on
+  equities and indices, so a pair of prints a delay-length apart is reported as
+  `not_comparable` with the delay named, never as a disagreement. Below that boundary (a closed
+  market, where every feed shows the same closing print) it is compared normally, and there the
+  cross-check is real.
+- **It never wins a tie.** The freshness tie-break lists Bloomberg last, so a delayed page can never
+  outrank a live feed that printed at the same instant.
+- **Agreement with Yahoo is weak.** Its previous close, 52-week range and closing price are
+  penny-identical to Yahoo's, so those two agreeing is one consolidated close read twice. Its ratios
+  (`pe_ratio`, `eps`) are computed independently and do carry a little cross-check value.
+
+`stock_prices` asks Bloomberg about at most four tickers per call (`TAPEBASIS_BLOOMBERG_BATCH_MAX`),
+because its page path is paced at 10 s per request; the rest are named in `warnings` instead of
+quietly missing. `stock_quote` bounds the leg with `TAPEBASIS_BLOOMBERG_QUOTE_DEADLINE`, so a slow or
+blocked page becomes a stated `TIMEOUT` / `UPSTREAM_BLOCKED` error while the other three readings
+still go out.
 
 ### Ops
 
@@ -414,6 +443,8 @@ Everything is optional. See [`.env.example`](.env.example) for the full list.
 | `TAPEBASIS_BLOOMBERG_IMPERSONATE` | `chrome124` | Browser fingerprint `curl_cffi` presents to bloomberg.com |
 | `TAPEBASIS_BLOOMBERG_TIMEOUT` | `30` | bloomberg.com HTTP timeout (s) |
 | `TAPEBASIS_BLOOMBERG_CACHE_TTL` | `60` | Bloomberg page cache lifetime (s) |
+| `TAPEBASIS_BLOOMBERG_QUOTE_DEADLINE` | `12.0` | Longest `stock_quote` waits for the Bloomberg leg before recording a `TIMEOUT` |
+| `TAPEBASIS_BLOOMBERG_BATCH_MAX` | `4` | Tickers per `stock_prices` call asked of Bloomberg (its page path is paced at 10 s) |
 | `TAPEBASIS_TV_MAX_RETRIES`, `TAPEBASIS_FINVIZ_MAX_RETRIES`, `TAPEBASIS_YAHOO_MAX_RETRIES` | `2` | Retries per provider request (the shared cooldown is not tunable) |
 | `MARKETAUX_API_TOKEN` | - | Optional. Enables licensed Marketaux news + entity sentiment |
 | `MARKETAUX_DAILY_BUDGET` | `90` | Marketaux request cap per day (free plan is 100) |
@@ -431,7 +462,8 @@ No proxy configuration exists: every provider reaches its upstream directly.
    TRADINGVIEW -> quote them, but say the figure is single-source and not corroborated.
    FINVIZ      -> same, from the Finviz side.
    YAHOO       -> same, from the Yahoo side.
-   BLOOMBERG   -> same: single-source by design, never cross-checked. Quote
+   BLOOMBERG   -> same, but find out why in comparisons: a delayed print is
+                  reported as not_comparable with the delay named. Quote
                   exchange_delay / print_time before calling a price live.
    NONE        -> say no data is available. Do not invent one.
 
@@ -445,8 +477,9 @@ No proxy configuration exists: every provider reaches its upstream directly.
 4. Check comparisons when you need to show how far apart the providers are.
    match: true  -> they agree within tolerance.
    match: false -> a real disagreement; every reading is in `values`.
-   match: null  -> not comparable: no print time, a session/age difference, or
-                   a field with no shared definition (FX day change).
+   match: null  -> not comparable: no print time, a session/age difference, a
+                   declared feed delay (Bloomberg's 15 minutes), or a field
+                   with no shared definition (FX day change).
 
 5. Check resolutions when a symbol behaved unexpectedly: it shows exactly which
    ticker each provider was asked for, and why.
@@ -456,7 +489,7 @@ No proxy configuration exists: every provider reaches its upstream directly.
 
 ```bash
 pip install -e ".[dev]"     # or, with uv: uv venv && uv pip install -e ".[dev]"
-pytest                      # 222 hermetic tests, no network
+pytest                      # 229 hermetic tests, no network
 pytest -m live              # opt-in: hits real upstreams
 ```
 
@@ -480,12 +513,12 @@ src/tapebasis/
 ├── tv_access.py          typed access to TradingView's own data
 ├── fv_access.py          typed access to the Finviz provider
 ├── yh_access.py          typed access to the Yahoo Finance provider
-├── bb_access.py          typed access to bloomberg.com (single-source)
+├── bb_access.py          typed access to bloomberg.com (fourth leg + Bloomberg-only tools)
 ├── catalog.py            plain-data tool catalogue (providers + comparison strategy)
 ├── tools_market.py       multi-source market tools
 ├── tools_finviz.py       Finviz-only tools
 ├── tools_tradingview.py  TradingView-only tools + combined_analysis
-├── tools_bloomberg.py    Bloomberg-only tools (single-source)
+├── tools_bloomberg.py    Bloomberg-only tools (one provider asked, so single-source)
 ├── tools_health.py       health + tool map
 └── providers/            provider implementations (TradingView, Finviz)
 ```

@@ -37,7 +37,7 @@ Finviz page would fail for reasons unrelated to the code.
 | `test_health.py` | Probe verdicts, fingerprints, drift detection, `rate_limits` block |
 | `test_sentiment.py` | Local scoring: direction, neutrality, determinism, aggregation |
 | `test_sentiment_tool.py` | Token-free path, backend switching, no fabricated scores |
-| `test_bloomberg.py` | Symbol mapping, `print_time` from the intraday series, sentinel rejection, single-source envelope |
+| `test_bloomberg.py` | Symbol mapping, `print_time` from the intraday series, sentinel rejection, the fourth-leg tie-break, declared-delay comparability, single-source envelope |
 | `test_server.py` | Tool registration, MCP surface |
 
 `test_upstream_contract.py` is the file to extend when live probing finds a provider behaving
@@ -76,12 +76,12 @@ src/tapebasis/
 ├── tv_access.py          typed access to TradingView's own data
 ├── fv_access.py          typed access to the Finviz provider
 ├── yh_access.py          typed access to the Yahoo Finance provider
-├── bb_access.py          typed access to bloomberg.com (single-source, curl_cffi)
+├── bb_access.py          typed access to bloomberg.com (fourth leg, curl_cffi)
 ├── catalog.py            tool catalogue (plain data)
 ├── tools_market.py       multi-source tools
 ├── tools_finviz.py       Finviz-only tools
 ├── tools_tradingview.py  TradingView-only tools + combined_analysis
-├── tools_bloomberg.py    Bloomberg-only tools (single-source)
+├── tools_bloomberg.py    Bloomberg-only tools (one provider asked)
 ├── tools_health.py       health + tool map
 └── providers/            provider implementations (TradingView, Finviz)
 ```
@@ -141,13 +141,17 @@ If the data originates from a different provider than the one whose dataset you 
 the actual origin**. `market_sentiment`'s local path is `FINVIZ` because the headlines are Finviz's
 even though the tool lives in `tools_tradingview.py`.
 
-A provider that cannot strengthen a cross-check does **not** get a place in `PROVIDER_ORDER`. Build
-it like `tools_bloomberg.py`: its own label in `DataProvider`, its own accessor, `envelope(...)` with
-`provider=DataProvider.<NAME>` so the result reads `SINGLE_SOURCE`, plus `cross_checked: false` and
-`reconciliation_leg: false`. Keep it out of `single()` too: that helper iterates `PROVIDER_ORDER`, so
-a label outside it produces no attempt row at all. Add the label to `PROVIDER_NAMES` and
-`PROVIDER_MEANING`, and add its limiter to `ratelimit.LIMITERS` so `GET /health` still reports its
-pacing. Needs and needs-not for the label itself are in Design Decisions 30.
+A provider that can supply an overlapping field belongs in `PROVIDER_ORDER`, even if its feed has a
+known delay. Add the label to `DataProvider`, `PROVIDER_NAMES`, `PROVIDER_MEANING` and
+`ratelimit.LIMITERS`, add its getter to every `FieldSpec` (a missing getter silently removes it from
+the comparison while `ALL` still claims coverage), and add it to `DEFAULT_ORDER` **last** so it can
+never win a tie. If the feed declares a delay, register it in `reconcile.KNOWN_REPORTING_LAG`: a pair
+that far apart then becomes `not_comparable` with the delay named instead of a false conflict.
+`tools_bloomberg.py` is the worked example, and Design Decisions 30 has the reasoning.
+
+A tool that asks a single provider still returns `SINGLE_SOURCE` by construction: use
+`single(provider, value)` / `envelope(provider=DataProvider.<NAME>)` and add `cross_checked: false` /
+`reconciliation_leg: false`, so the response cannot be mistaken for a reconciled one.
 
 ## House rules
 

@@ -5,12 +5,12 @@ The first-class field is ``data_provider``: an LLM reading the tool result
 must always be able to tell which provider(s) actually supplied the numbers it
 is about to quote.
 
-Providers are first-class peers:
+Providers are first-class peers, asked in parallel:
 
 ``TRADINGVIEW``  TradingView's scanner and chart websocket.
 ``FINVIZ``       finviz.com HTML and JSON islands.
 ``YAHOO``        query1.finance.yahoo.com chart API.
-``BLOOMBERG``    bloomberg.com public quote pages, single-source by design.
+``BLOOMBERG``    bloomberg.com public quote pages, a fourth leg with a known delay.
 
 ``ALL`` means **every provider that was asked answered**. It is a statement
 about coverage, not about agreement. Agreement is a separate axis: it lives in
@@ -18,12 +18,23 @@ about coverage, not about agreement. Agreement is a separate axis: it lives in
 
 ``NONE`` means no provider answered; no value is presented.
 
-Bloomberg is a label but not a reconciliation leg: it is outside
-:data:`PROVIDER_ORDER`, so it can never contribute to ``ALL`` and never enters
-``comparisons``. Its equity quotes are delayed and its statics duplicate
-Yahoo's, so counting it as a fourth independent leg would inflate the
-``MULTI_SOURCE`` claim rather than support it. It is served for what it alone
-carries, labelled ``BLOOMBERG``.
+Bloomberg is a full leg: it is asked in parallel, its readings appear in
+``comparisons[].values``, and it contributes to ``ALL`` / ``providers_answered``.
+Two of its properties need saying out loud rather than being hidden by a
+tolerance:
+
+* its equity and index prints are exchange-delayed (``exchangeDelay`` is
+  ``15 Minutes``), so a pair of prints that is further apart than the skew
+  guard allows is reported as **not comparable** rather than as a
+  disagreement, and it never wins the freshness tie-break against a live
+  print;
+* its static fields (previous close, 52-week range, closing price) are
+  penny-identical to Yahoo's, so agreement between those two is weak
+  corroboration, not two independent witnesses.
+
+Both facts are reported in the payload (``exchange_delay``, ``print_time``,
+``comparisons[].pairs[].not_comparable``), so an agent can tell a real
+cross-check from a delayed duplicate.
 """
 from __future__ import annotations
 
@@ -57,9 +68,9 @@ class Verification(str, Enum):
 
 
 #: Every provider label that participates in reconciliation, in display order.
-#: Bloomberg is intentionally absent: it is served single-source and must never
-#: be counted as an independent leg of ``ALL``.
-PROVIDER_ORDER: tuple[str, ...] = ("TRADINGVIEW", "FINVIZ", "YAHOO")
+#: Bloomberg is last because it is the leg whose prints can be structurally
+#: older: order only matters for display and for the documented tie-break.
+PROVIDER_ORDER: tuple[str, ...] = ("TRADINGVIEW", "FINVIZ", "YAHOO", "BLOOMBERG")
 
 #: Human-readable name for each provider, used in notices and docs.
 PROVIDER_NAMES: dict[str, str] = {
@@ -99,10 +110,10 @@ PROVIDER_MEANING: dict[DataProvider, str] = {
         "field, so the value is single-source and NOT corroborated."
     ),
     DataProvider.BLOOMBERG: (
-        "Data came from BLOOMBERG only. Bloomberg is served as a single-source "
-        "provider and is never cross-checked against the others, so treat this "
-        "value as uncorroborated. Equity quotes on bloomberg.com are delayed; "
-        "check `exchange_delay` and `print_time` before calling a price live."
+        "Data came from BLOOMBERG only. The other providers did not supply this "
+        "field, so the value is single-source and NOT corroborated. Bloomberg's "
+        "equity and index quotes are exchange-delayed; check `exchange_delay` and "
+        "`print_time` before calling a price live."
     ),
     DataProvider.NONE: (
         "No provider could supply this data. Do not present any value for it."

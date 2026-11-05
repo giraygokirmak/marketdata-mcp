@@ -20,8 +20,11 @@ Symptom → cause → fix.
 | `NOT_CONFIGURED` | Feature needs a token | Add `MARKETAUX_API_TOKEN`, or ignore: the data is still served |
 
 A single-source response is **not** a failure. The data is served and labelled; the notice says it is
-not corroborated. `BLOOMBERG` is not even a candidate for `ALL`: the `bloomberg_*` tools are
-single-source by design (see [below](#bloomberg-returns-none-or-upstream_blocked)).
+not corroborated. `BLOOMBERG` here means only Bloomberg answered (the `bloomberg_*` tools ask that one
+provider), not that Bloomberg is excluded from `ALL`: in `stock_quote` / `stock_prices` it is a full
+leg, and its failures appear as ordinary `errors` entries. A `TIMEOUT` from that leg is the 15-minute
+delay plus 10 s pacing hitting `TAPEBASIS_BLOOMBERG_QUOTE_DEADLINE`; the other readings are still
+valid; the Bloomberg sections below cover the rest.
 
 **Also check `providers_answered`.** `ALL` means every provider that was asked answered, which can be
 only some of them. If a provider is missing from that list and there is no matching `errors` entry,
@@ -74,11 +77,12 @@ rm ~/.tapebasis/health_state.json     # only after fixing the parser
 5. Beyond tolerance → `match: false`, named in `notice` and `warnings`.
 6. `match: null` with `not_comparable: true` → the readings were not judged at all. The reason in
    `pairs[].not_comparable` says which: different session dates, a print past the age ceiling, no
-   print time to prove the observation, or a field with no shared definition (FX day change).
+   print time to prove the observation, a declared feed delay (Bloomberg's 15 minutes), or a field
+   with no shared definition (FX day change).
 
 **Check `sources` before assuming a bug.** Each label names the upstream that leg actually called:
-TradingView's scanner, finviz.com, and query1.finance.yahoo.com. A closed market should agree to the
-cent; an intraday read legitimately will not.
+TradingView's scanner, finviz.com, query1.finance.yahoo.com and bloomberg.com. A closed market should
+agree to the cent; an intraday read legitimately will not.
 
 If a mismatch is systematic on one field, the tolerance may be wrong. See
 [Development § Choosing a tolerance](Development#choosing-a-tolerance).
@@ -92,7 +96,9 @@ the print belongs to. Finviz mid-session and Yahoo at the prior close answer two
 so the pair is excluded from the agreement decision with the reason recorded in
 `pairs[].not_comparable`.
 
-The price itself is still compared, because a price stays comparable across minutes. If you need a
+The price is compared when the prints are close enough to be the same observation; past that window
+it is reported as `not_comparable` too, with the gap in minutes. A price points at an instant, so two
+prints 20 minutes apart are two observations and their difference is the market moving. If you need a
 like-for-like day change, compare providers whose `freshness` timestamps share a session date and are
 within 15 minutes of each other.
 
@@ -104,8 +110,10 @@ On FX this is permanent, not a timing accident: spot FX has no single official p
 ## `bloomberg_quote` returns a price that differs from `stock_quote`
 
 **Expected.** Bloomberg's equity pages are delayed (`exchangeDelay` is `15 Minutes`), so its print is
-older by design. Trust `stock_quote` for the current price: it arbitrates three live-capable providers
-by print time. Bloomberg's number is a separate, explicitly delayed reading.
+older by design. `stock_quote` already asks Bloomberg and compares it: when its print is a delay length
+away from the others, the pair is reported as `not_comparable` with that reason instead of being
+counted as agreement or as a conflict. The single `price` comes from the newest print, and Bloomberg is
+last in the tie-break order, so it never wins one.
 
 Read `exchange_delay` and `print_time` in the `bloomberg_quote` payload before quoting it. If
 `print_time` is null, the intraday series did not end at the quoted price and the response says so in

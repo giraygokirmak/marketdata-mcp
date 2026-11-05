@@ -13,7 +13,7 @@ like `verified: true`.
 **Why:** "verified" collapses two different facts: *how many providers answered* and *whether they
 agreed*. A boolean loses the case that matters most: several answered and disagreed. With an explicit
 state per provider plus `comparisons`, that case is visible instead of hidden. Bloomberg was added
-later and joins the enumeration without joining the reconciliation set, see decision 30.
+later as a fourth leg with a declared delay, see decision 30.
 
 **Consequence:** `ALL` means "every provider that was asked answered", not "they agree". Agreement
 lives in `comparisons[].match`. This is documented in several places because it is the single easiest
@@ -363,11 +363,13 @@ would be simultaneously too tight for one field and too loose for another.
 
 ## 28. Comparability takes more than one time threshold
 
-**Decision:** a session-relative field is compared only when the guards that apply to it pass: a
-900 s print-time ceiling, equality of the US/Eastern session date, and, for the fields re-derived
-from the print (`change_percent`, `volume`), an 8 h absolute age ceiling when a reference clock is
-available. `previous_close` takes the first two only, because an old quote does not falsify a
-previous close.
+**Decision:** a field is compared only when the guards that apply to it pass: a 900 s print-time
+ceiling, equality of the US/Eastern session date, a declared feed delay as a boundary of its own
+(Bloomberg states 15 minutes, see decision 30), and, for the fields re-derived from the print
+(`change_percent`, `volume`), an 8 h absolute age ceiling when a reference clock is available.
+`previous_close` takes the first three only, because an old quote does not falsify a previous close.
+`price` takes the first three as well: two prices minutes apart are two observations, and calling
+their difference a provider conflict blames the feed for the market moving.
 
 **Why:** each guard sees something the others cannot.
 
@@ -410,31 +412,44 @@ warning meaningful.
 
 ---
 
-## 30. Bloomberg is a label, not a fourth comparison leg
+## 30. Bloomberg is a fourth leg, with its delay as a comparability boundary
 
-**Decision:** Bloomberg is added as a `data_provider` value and served through its own tools
-(`bloomberg_quote`, `bloomberg_markets`), but it is **not** added to `PROVIDER_ORDER`, is never passed
-to `reconcile.ask`, and never appears in `comparisons`. `ALL` and `MULTI_SOURCE` are unchanged by its
-existence.
+**Decision:** Bloomberg is a full provider: it is in `PROVIDER_ORDER`, `stock_quote` and
+`stock_prices` pass it to `reconcile.ask` in parallel with the others, its readings appear in
+`comparisons[].values`, and it contributes to `ALL` / `providers_answered`. Its declared feed delay
+is modelled as a boundary of its own rather than as a tolerance, and it sits last in the documented
+tie-break order.
 
-**Why:** access was solvable, independence was not. Three measurements decided it.
+**Why it is a leg.** Redundancy is the product. An overlapping figure asked of a fourth provider is
+one more chance to catch a broken feed, and refusing to ask a provider because its numbers often
+match is a decision made from memory of one afternoon's measurements, not from the data flow. The
+"it is delayed" objection turned out to be solvable: the page's real print time is derivable
+(`priceMovements1Day[-1].dateTime`, verified against the quoted price), so the leg can be ordered
+against the others instead of being excluded.
 
-- **It is delayed.** Equity quote pages report `exchangeDelay: "15 Minutes"` and
-  `isExchangeDelayed: true`. A 15-minute-old reading cannot arbitrate which of two live prints is
-  current, which is what freshness arbitration is for.
-- **It is not independent on the static fields.** Closing statics came back penny-identical to
-  Yahoo's (same previous close, same 52-week range), so counting it would pad `MULTI_SOURCE` while
-  adding no second opinion. A cross-check is only worth its label if the second reading could
-  plausibly disagree.
-- **Its timestamp is a sentinel.** Equity pages carry `lastUpdate: 2026-11-05T01:00:00.000Z` while
-  the real print was `2026-11-04T20:58:00Z`. Fed into `freshness.py`, that sentinel would make a
-  stale page win against a live print, inverting the one rule the freshness layer exists to enforce.
-  `bb_access` therefore derives `print_time` from `priceMovements1Day[-1].dateTime` and refuses it
-  when that point's value does not match the quoted price.
+**Why the delay is a boundary, not a tolerance.** Equity and index pages report
+`exchangeDelay: "15 Minutes"` and `isExchangeDelayed: true`. A 15-minute-old print does not describe
+the same observation as a live one, and the difference measured between them is the market moving,
+not the providers disagreeing. Widening the tolerance to absorb it would either hide real conflicts
+or report a false one on every live quote. So a pair that includes Bloomberg stops being comparable
+at one declared delay length, and the reason string names the delay. Below that boundary (a closed
+market, where every feed shows the same closing print) the pair is compared normally and the
+cross-check is genuine.
 
-**What it does add:** the government benchmark yield curve, plus index, commodity and FX levels on
-one board, which no other provider here publishes. That is a real capability, so it earns a label,
-its own tools and honest single-source marking rather than being folded into `ALL`.
+**What is still weak, and said out loud.** Closing statics come back penny-identical to Yahoo's (same
+previous close, same 52-week range), so those two agreeing is one consolidated close read twice.
+`pe_ratio` and `eps` are computed independently and do carry a small cross-check value. The docs say
+this rather than letting the `ALL` label imply more than it can.
+
+**The sentinel stays guarded.** Equity pages carry `lastUpdate: 2026-11-05T01:00:00.000Z` while the
+real print was `2026-11-04T20:58:00Z`. `bb_access` therefore derives `print_time` from the last
+intraday point and refuses it when that point's value does not match the quoted price, and the leg is
+last in `DEFAULT_ORDER` so a delayed page can never win a tie against a live print.
+
+**Cost control.** Its page path is paced at 10 s per request, so `stock_quote` bounds the leg with
+`TAPEBASIS_BLOOMBERG_QUOTE_DEADLINE` (a stated `TIMEOUT` instead of a held response, with the other
+three readings still going out) and `stock_prices` asks it about at most
+`TAPEBASIS_BLOOMBERG_BATCH_MAX` tickers per call, naming the rest in `warnings`.
 
 **Access constraint:** bloomberg.com gates plain HTTP clients on the TLS fingerprint. `httpx` gets a
 403 robot page with any headers; `curl_cffi` with a specific impersonation version gets 200. Only the
@@ -443,9 +458,10 @@ minutes while the HTML page kept answering from the same session. This is also w
 has no Bloomberg probe: an `httpx` probe would report a false outage, so the tool response itself is
 the availability signal.
 
-**Consequence:** a response can say `BLOOMBERG` and `SINGLE_SOURCE` together, never `ALL`, and both
-tools return `cross_checked: false` / `reconciliation_leg: false` so an agent cannot mistake it for a
-corroborated figure. The board reports `print_time: null`, because it has none.
+**Consequence:** `ALL` can now include Bloomberg, and `comparisons` can carry it, with the delay
+visible in `exchange_delay`, `print_time` and any `not_comparable` reason. The `bloomberg_*` tools
+remain single-source calls (`cross_checked: false`, `reconciliation_leg: false`), and the board still
+reports `print_time: null` because it has none.
 
 ---
 

@@ -161,10 +161,12 @@ LIMITERS: dict[str, ProviderLimiter] = {
         max_inflight=_env_int("TAPEBASIS_YAHOO_MAX_INFLIGHT", 1),
         max_retries=_env_int("TAPEBASIS_YAHOO_MAX_RETRIES", 2),
     ),
-    # Bloomberg is not in the reconciliation set, but it still has an upstream
-    # that punishes bursts. Its HTML path tolerated ~5 requests 10 s apart
-    # while its separate API bucket burned after ~10 rapid calls and stayed
-    # 403 for minutes, so this is deliberately the slowest limiter here.
+    # Bloomberg is a reconciliation leg now, and it still has an upstream that
+    # punishes bursts. Its HTML path tolerated ~5 requests 10 s apart while its
+    # separate API bucket burned after ~10 rapid calls and stayed 403 for
+    # minutes, so this is deliberately the slowest limiter here. ``stock_quote``
+    # bounds the wait with a deadline instead of holding the response open, and
+    # ``stock_prices`` caps how many tickers it asks about per call.
     "BLOOMBERG": ProviderLimiter(
         provider="BLOOMBERG",
         min_interval=_env_float("TAPEBASIS_BLOOMBERG_MIN_INTERVAL", 10.0),

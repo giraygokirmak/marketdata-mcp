@@ -1,21 +1,23 @@
 """Multi-source market data tools.
 
 Every tool here asks **every** provider that can serve the fact, TradingView,
-Finviz and Yahoo Finance, compares the answers, and returns the reconciled
-payload with an explicit ``data_provider`` label. See
+Finviz, Yahoo Finance and Bloomberg, compares the answers, and returns the
+reconciled payload with an explicit ``data_provider`` label. See
 :mod:`tapebasis.reconcile` for the rules.
 
 Providers are addressed through :mod:`tapebasis.tv_access`,
-:mod:`tapebasis.fv_access` and :mod:`tapebasis.yh_access`, which normalise the
-provider service layers. Nothing proxies another provider.
+:mod:`tapebasis.fv_access`, :mod:`tapebasis.yh_access` and
+:mod:`tapebasis.bb_access`, which normalise the provider service layers. Nothing
+proxies another provider.
 """
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from typing import Any
 
-from . import fv_access, tv_access, yh_access
+from . import bb_access, fv_access, tv_access, yh_access
 from .health import MONITOR
 from .merge_helpers import (
     fv_earnings_fields,
@@ -34,10 +36,12 @@ from .providers_state import (
     DataProvider,
     NoDataError,
     NotApplicable,
+    ProviderError,
     envelope,
     provider_from_answered,
 )
 from .reconcile import (
+    BLOOMBERG,
     FINVIZ,
     TRADINGVIEW,
     YAHOO,
@@ -47,13 +51,38 @@ from .reconcile import (
     finalize,
     providers_in,
 )
-from .symbols import resolve, strip_exchange, to_finviz
+from .symbols import Resolution, resolve, strip_exchange, to_finviz
 
-#: Every provider the market tools ask. Yahoo is a peer, not a fallback.
-ALL_PROVIDERS = (TRADINGVIEW, FINVIZ, YAHOO)
+#: Every provider the market tools ask. They are peers, not fallbacks: a tool
+#: either asks all of them or records ``NOT_ATTEMPTED`` for the ones that have
+#: no endpoint. Bloomberg is the fourth: it is asked in parallel like the rest,
+#: and its known delay is handled by the print-time guards rather than by
+#: keeping it out of the comparison.
+ALL_PROVIDERS = (TRADINGVIEW, FINVIZ, YAHOO, BLOOMBERG)
 
-#: Largest print-time gap still treated as the same observation for a
-#: session-relative field (a day change, a previous close, accumulated volume).
+#: Read a numeric environment override without letting a typo crash the import.
+def _env_number(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+#: Longest a quote call will wait for Bloomberg's page before giving up on it.
+#: Its limiter paces requests 10 s apart, so without a deadline one slow hop
+#: would hold the whole response; with it, Bloomberg becomes a stated error and
+#: the other providers' readings still go out.
+BLOOMBERG_DEADLINE_SECONDS = _env_number("TAPEBASIS_BLOOMBERG_QUOTE_DEADLINE", 12.0)
+
+#: Most tickers a single ``stock_prices`` call asks Bloomberg about. Its page
+#: path is paced at 10 s per request, so an unbounded fan-out would take
+#: minutes; the remainder is reported as skipped rather than silently missing.
+BLOOMBERG_BATCH_MAX = max(0, int(_env_number("TAPEBASIS_BLOOMBERG_BATCH_MAX", 4)))
+
+#: Largest print-time gap still treated as the same observation. Applies to a
+#: session-relative field (a day change, a previous close, accumulated volume)
+#: and to ``price``: a price points at an instant, so two prints minutes apart
+#: are two observations rather than one number reported twice.
 #:
 #: The floor is empirical, not zero: two *live* endpoints were measured 604s
 #: apart on a thin contract (TradingView 09:13:15Z vs Yahoo 09:03:11Z for
@@ -106,14 +135,44 @@ async def _symbols_for(symbol: str) -> dict[str, Any]:
         resolve(symbol, FINVIZ),
         resolve(symbol, YAHOO),
     )
+    bb_res = _bloomberg_resolution(symbol)
     return {
         "query": symbol,
         "ticker": ticker,
         "TRADINGVIEW": tv_res,
         "FINVIZ": fv_res,
         "YAHOO": yh_res,
-        "resolutions": _resolution_block(tv_res, fv_res, yh_res),
+        "BLOOMBERG": bb_res,
+        "resolutions": _resolution_block(tv_res, fv_res, yh_res, bb_res),
     }
+
+
+def _bloomberg_resolution(symbol: str) -> Resolution:
+    """Bloomberg's id for *symbol*, resolved without a request.
+
+    Bloomberg has no usable anonymous search endpoint and answers a bad id with
+    a bot-wall 403 rather than a 404, so identity is a curated alias table plus
+    a mechanical rule (:func:`tapebasis.bb_access.to_bloomberg`). That is a
+    resolution, just not a searched one, and the ``method`` says so.
+    """
+    try:
+        bloomberg_id = bb_access.to_bloomberg(symbol)
+    except Exception as exc:  # noqa: BLE001 - a bad symbol is not a failure here
+        return Resolution(
+            query=symbol,
+            provider=BLOOMBERG,
+            symbol=None,
+            method="none",
+            note=getattr(exc, "message", None) or str(exc),
+        )
+    return Resolution(
+        query=symbol,
+        provider=BLOOMBERG,
+        symbol=bloomberg_id,
+        venue=bloomberg_id.rpartition(":")[2],
+        method="mechanical",
+        confidence=0.8,
+    )
 
 
 
@@ -155,13 +214,24 @@ def _quote_specs(*, day_change_comparable: bool = True) -> tuple[FieldSpec, ...]
             lambda p: p.get("price"),
             lambda p: p.get("price"),
             yh_get=lambda p: p.get("price"),
+            bb_get=lambda p: p.get("price"),
             tolerance_pct=0.5,
+            # A price is only one number if the two prints describe the same
+            # instant. Bloomberg's is structurally older (15 minutes on
+            # equities), so without this guard every live quote would report a
+            # "disagreement" that is really the market moving between two
+            # prints. Different sessions are excluded for the same reason: a
+            # Friday close and a Thursday close are both "the price" and are
+            # not the same observation.
+            max_skew_seconds=SKEW_LIMIT_SECONDS,
+            session_boundary=True,
         ),
         FieldSpec(
             "change_percent",
             lambda p: p.get("change_percent"),
             lambda p: p.get("change_percent"),
             yh_get=lambda p: p.get("change_percent"),
+            bb_get=lambda p: p.get("change_percent"),
             tolerance_pct=2.0,
             absolute_floor=0.05,
             # A day change is measured against the previous close *of the
@@ -178,6 +248,7 @@ def _quote_specs(*, day_change_comparable: bool = True) -> tuple[FieldSpec, ...]
             lambda p: p.get("previous_close"),
             lambda p: p.get("previous_close"),
             yh_get=lambda p: p.get("previous_close"),
+            bb_get=lambda p: p.get("previous_close"),
             tolerance_pct=0.5,
             # The same hazard, one step removed: "previous close" itself rolls
             # forward when a new session starts, and two prints 30 seconds
@@ -192,6 +263,7 @@ def _quote_specs(*, day_change_comparable: bool = True) -> tuple[FieldSpec, ...]
             lambda p: p.get("week_52_high"),
             lambda p: p.get("week_52_high"),
             yh_get=lambda p: p.get("week_52_high"),
+            bb_get=lambda p: p.get("week_52_high"),
             tolerance_pct=0.5,
         ),
         FieldSpec(
@@ -199,12 +271,14 @@ def _quote_specs(*, day_change_comparable: bool = True) -> tuple[FieldSpec, ...]
             lambda p: p.get("week_52_low"),
             lambda p: p.get("week_52_low"),
             yh_get=lambda p: p.get("week_52_low"),
+            bb_get=lambda p: p.get("week_52_low"),
             tolerance_pct=0.5,
         ),
         FieldSpec(
             "pe_ratio",
             lambda p: p.get("pe_ratio"),
             lambda p: p.get("pe_ratio"),
+            bb_get=lambda p: p.get("pe_ratio"),
             tolerance_pct=2.0,
         ),
         FieldSpec(
@@ -219,6 +293,7 @@ def _quote_specs(*, day_change_comparable: bool = True) -> tuple[FieldSpec, ...]
             lambda p: p.get("volume"),
             lambda p: p.get("volume"),
             yh_get=lambda p: p.get("volume"),
+            bb_get=lambda p: p.get("volume"),
             tolerance_pct=1.0,
             # Volume accumulates through a session; a partial session and a
             # full one are not the same measurement.
@@ -236,18 +311,28 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
     """Quote and fundamentals for one instrument, asked of every capable provider.
 
     Each provider is asked independently and natively: TradingView's scanner,
-    Finviz's quote page, Yahoo's chart API. Nothing proxies another, so the
-    cross-check is real. Price, change, previous close, 52-week range, P/E, RSI
-    and volume are compared field by field; Finviz's deeper fundamentals, the
-    84-field snapshot, company profile, peers and after-hours print, ride
-    along, each labelled with the provider that supplied it. A field that
-    cannot be shown to describe the same observation is reported as
-    ``not_comparable`` rather than as a conflict, and an FX day change is never
-    compared because spot FX has no single official previous close.
+    Finviz's quote page, Yahoo's chart API and Bloomberg's quote page, in
+    parallel. Nothing proxies another, so the cross-check is real. Price,
+    change, previous close, 52-week range, P/E, RSI and volume are compared
+    field by field; Finviz's deeper fundamentals, the 84-field snapshot, company
+    profile, peers and after-hours print, ride along, each labelled with the
+    provider that supplied it. A field that cannot be shown to describe the same
+    observation is reported as ``not_comparable`` rather than as a conflict, and
+    an FX day change is never compared because spot FX has no single official
+    previous close.
+
+    Bloomberg's prints can be structurally older than a live feed's
+    (``exchangeDelay`` is ``15 Minutes`` on equities and indices). That is
+    handled by the print-time guard, not by hiding the leg: when its print is
+    too far from the others to be the same observation, the pair is reported as
+    not comparable with that reason, and its delayed reading never wins the
+    freshness tie-break. ``exchange_delay`` and ``print_time`` ride along so the
+    delay is visible.
 
     Symbols are resolved dynamically per provider, so ``XAUUSD`` reaches
-    TradingView as ``OANDA:XAUUSD``, Yahoo as ``XAUUSD=X``, and Finviz is told
-    it does not carry spot gold (rather than being sent to a 404).
+    TradingView as ``OANDA:XAUUSD``, Yahoo as ``XAUUSD=X``, Bloomberg as
+    ``XAUUSD:CUR``, and Finviz is told it does not carry spot gold (rather than
+    being sent to a 404).
 
     Args:
         symbol: Anything the instrument is commonly called (``AAPL``, ``BRK.B``,
@@ -264,6 +349,7 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
     tv_res = resolved["TRADINGVIEW"]
     fv_res = resolved["FINVIZ"]
     yh_res = resolved["YAHOO"]
+    bb_res = resolved["BLOOMBERG"]
 
     async def tv_call() -> dict[str, Any]:
         if not tv_res.found:
@@ -294,7 +380,31 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
         except NoDataError as exc:
             raise NotApplicable(YAHOO, exc.message) from exc
 
-    pair = await ask(tv_call, fv_call, yh_call)
+    async def bb_call() -> dict[str, Any]:
+        if not bb_res.found:
+            raise NotApplicable(
+                BLOOMBERG, bb_res.note or f"Bloomberg has no id for {symbol}"
+            )
+        try:
+            data, _source = await asyncio.wait_for(
+                bb_access.quote(symbol), timeout=BLOOMBERG_DEADLINE_SECONDS
+            )
+        except asyncio.TimeoutError as exc:
+            # Paced at 10 s per request, so waiting forever is a real option for
+            # this leg. A stated timeout is better than a silent omission: the
+            # reader can see the leg was asked and did not answer.
+            raise ProviderError(
+                BLOOMBERG,
+                f"Bloomberg did not answer within {BLOOMBERG_DEADLINE_SECONDS:.0f}s; "
+                "its page path is paced at 10 s per request, so an interrupted "
+                "call is reported rather than waited out",
+                code="TIMEOUT",
+            ) from exc
+        except NoDataError as exc:
+            raise NotApplicable(BLOOMBERG, exc.message) from exc
+        return data
+
+    pair = await ask(tv_call, fv_call, yh_call, bb_call)
 
     def tv_norm(payload: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -342,16 +452,41 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
             "price_timestamp": payload.get("market_time"),
         }
 
+    def bb_norm(payload: dict[str, Any]) -> dict[str, Any]:
+        # Bloomberg's print time is already derived from the intraday series by
+        # ``bb_access.shape_quote`` and is passed as ``bb_time``, so it is not
+        # repeated here: an extra ``price_timestamp`` would be a competing
+        # timestamp in the payload.
+        week_52 = payload.get("week_52_range") or [None, None]
+        return {
+            "price": payload.get("price"),
+            "change_percent": payload.get("change_percent"),
+            "previous_close": payload.get("previous_close"),
+            "week_52_low": week_52[0] if len(week_52) > 0 else None,
+            "week_52_high": week_52[1] if len(week_52) > 1 else None,
+            "pe_ratio": payload.get("pe_ratio"),
+            "volume": payload.get("volume"),
+            "currency": payload.get("currency"),
+            "exchange": payload.get("exchange"),
+            "print_time": payload.get("print_time"),
+            "exchange_delay": payload.get("exchange_delay"),
+            "is_exchange_delayed": payload.get("is_exchange_delayed"),
+        }
+
     return finalize(
         pair,
         # FX has no shared previous close, so its day change is reported from
         # every provider but never compared. Everything else is compared.
         specs=_quote_specs(
-            day_change_comparable=not _is_fx(tv_res, fv_res, yh_res)
+            day_change_comparable=not _is_fx(tv_res, fv_res, yh_res, bb_res)
         ),
         tv_norm=tv_norm,
         fv_norm=fv_norm,
         yh_norm=yh_norm,
+        bb_norm=bb_norm,
+        # Bloomberg's print time is derived, not read off ``lastUpdate``, so it
+        # is passed explicitly rather than picked up from the shaped payload.
+        bb_time=(pair.bb.payload or {}).get("print_time"),
         # The only tool that compares session-relative fields, so the only one
         # that needs a reference clock for the frozen-feed ceiling.
         now=datetime.now(timezone.utc),
@@ -363,6 +498,9 @@ async def stock_quote(symbol: str) -> dict[str, Any]:
             YAHOO: f"https://query1.finance.yahoo.com/v8/finance/chart/{yh_res.symbol}"
             if yh_res.found
             else "not carried by Yahoo Finance",
+            BLOOMBERG: f"https://www.bloomberg.com/quote/{bb_res.symbol}"
+            if bb_res.found
+            else "no Bloomberg id",
         },
         extra={"symbol": ticker, "resolutions": resolved["resolutions"]},
         **_health({"providers": providers_in(pair) or ALL_PROVIDERS}),
@@ -377,9 +515,13 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
     """Prices for several instruments at once, from every provider that carries them.
 
     Each ticker is resolved per provider and looked up natively: TradingView's
-    scanner, Finviz's screener, Yahoo's chart API. The per-row ``data_provider``
-    says whether that particular ticker was answered by several providers, by
-    one, or by none; ``agrees`` says whether the readings matched.
+    scanner, Finviz's screener, Yahoo's chart API, Bloomberg's quote page. The
+    per-row ``data_provider`` says whether that particular ticker was answered by
+    several providers, by one, or by none; ``agrees`` says whether the readings
+    matched. Bloomberg is asked about at most
+    ``TAPEBASIS_BLOOMBERG_BATCH_MAX`` tickers per call (default 4) because its
+    page path is paced at 10 s per request; the rest are reported as skipped in
+    ``warnings`` rather than silently missing.
 
     Args:
         tickers: Comma-separated symbols, e.g. ``"AAPL,MSFT,XAUUSD"``.
@@ -439,13 +581,49 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
             raise NotApplicable(YAHOO, f"no Yahoo data ({detail})")
         return {"rows": rows, "misses": misses}
 
-    pair = await ask(tv_call, fv_call, yh_call)
+    bb_symbols = [
+        symbol
+        for symbol in requested
+        if resolved[symbol]["BLOOMBERG"].found
+    ]
+    bb_asked = bb_symbols[:BLOOMBERG_BATCH_MAX]
+    bb_skipped = bb_symbols[BLOOMBERG_BATCH_MAX:]
+
+    async def bb_call() -> dict[str, Any]:
+        if not bb_asked:
+            raise NotApplicable(
+                BLOOMBERG,
+                "no Bloomberg id resolved"
+                if not bb_symbols
+                else f"Bloomberg is asked about at most {BLOOMBERG_BATCH_MAX} tickers per batch",
+            )
+        rows: dict[str, dict[str, Any]] = {}
+        misses: dict[str, str] = {}
+        for symbol in bb_asked:
+            try:
+                data, _source = await asyncio.wait_for(
+                    bb_access.quote(symbol), timeout=BLOOMBERG_DEADLINE_SECONDS
+                )
+                rows[symbol] = data
+            except asyncio.TimeoutError:
+                misses[symbol] = f"no answer within {BLOOMBERG_DEADLINE_SECONDS:.0f}s"
+            except NoDataError as exc:
+                misses[symbol] = exc.message
+            except Exception as exc:  # noqa: BLE001 - one miss must not sink the batch
+                misses[symbol] = getattr(exc, "message", None) or f"{type(exc).__name__}: {exc}"
+        if not rows:
+            detail = "; ".join(f"{s}: {m}" for s, m in misses.items())
+            raise NotApplicable(BLOOMBERG, f"no Bloomberg data ({detail})")
+        return {"rows": rows, "misses": misses}
+
+    pair = await ask(tv_call, fv_call, yh_call, bb_call)
 
     from .reconcile import DEFAULT_ORDER, _resolved_label, compare_values
 
     tv_rows = (pair.tv.payload or {}).get("rows") or {}
     fv_rows = (pair.fv.payload or {}).get("rows") or {}
     yh_rows = (pair.yh.payload or {}).get("rows") or {}
+    bb_rows = (pair.bb.payload or {}).get("rows") or {}
 
     out_rows: list[dict[str, Any]] = []
     for symbol in requested:
@@ -456,6 +634,7 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
         )
         yh_row = yh_rows.get(symbol)
         yh_miss = ((pair.yh.payload or {}).get("misses") or {}).get(symbol)
+        bb_miss = ((pair.bb.payload or {}).get("misses") or {}).get(symbol)
 
         readings: dict[str, dict[str, Any]] = {}
         if tv_row:
@@ -483,6 +662,22 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
                 "company": yh_row.get("shortName"),
                 "price_timestamp": yh_row.get("market_time"),
             }
+        bb_row = bb_rows.get(symbol)
+        if bb_row:
+            week_52 = bb_row.get("week_52_range") or [None, None]
+            readings[BLOOMBERG] = {
+                "price": bb_row.get("price"),
+                "change_percent": bb_row.get("change_percent"),
+                "previous_close": bb_row.get("previous_close"),
+                "week_52_low": week_52[0] if len(week_52) > 0 else None,
+                "week_52_high": week_52[1] if len(week_52) > 1 else None,
+                "company": bb_row.get("name"),
+                # Derived from the intraday series by ``bb_access``, never the
+                # ``lastUpdate`` sentinel, so it can be ordered against the
+                # other providers' prints.
+                "price_timestamp": bb_row.get("print_time"),
+                "exchange_delay": bb_row.get("exchange_delay"),
+            }
 
         if not readings:
             out_rows.append(
@@ -497,24 +692,38 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
                         p: (entry[p].note or "no ticker") if not entry[p].found else None
                         for p in ALL_PROVIDERS
                     }
-                    | ({YAHOO: yh_miss} if yh_miss else {}),
+                    | ({YAHOO: yh_miss} if yh_miss else {})
+                    | ({BLOOMBERG: bb_miss} if bb_miss else {}),
                 }
             )
             continue
 
+        stamps = {p: r.get("price_timestamp") for p, r in readings.items()}
+        # Same guards as ``stock_quote``: a delayed print (Bloomberg is 15
+        # minutes behind on equities) is a different observation, not a
+        # disagreement, and a screener row with no print time cannot prove
+        # otherwise.
         price_cmp = compare_values(
-            {p: r.get("price") for p, r in readings.items()}, tolerance_pct=0.5
+            {p: r.get("price") for p, r in readings.items()},
+            tolerance_pct=0.5,
+            times=stamps,
+            max_skew_seconds=SKEW_LIMIT_SECONDS,
+            session_boundary=True,
         )
         change_cmp = compare_values(
             {p: r.get("change_percent") for p, r in readings.items()},
             tolerance_pct=2.0,
             absolute_floor=0.05,
+            times=stamps,
+            max_skew_seconds=SKEW_LIMIT_SECONDS,
+            session_boundary=True,
             # Same rule as ``stock_quote``: an FX day change has no shared
             # baseline, so it is reported but never called a conflict.
             not_comparable_reason=(
                 _FX_DAY_CHANGE_REASON
                 if _is_fx(
-                    entry["TRADINGVIEW"], entry["FINVIZ"], entry["YAHOO"]
+                    entry["TRADINGVIEW"], entry["FINVIZ"], entry["YAHOO"],
+                    entry["BLOOMBERG"],
                 )
                 else None
             ),
@@ -562,6 +771,10 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
             "comparisons": {"price": price_cmp, "change_percent": change_cmp},
             "resolutions": entry["resolutions"],
         }
+        if readings.get(BLOOMBERG, {}).get("exchange_delay"):
+            # The delay is a property of the reading, so it travels with it
+            # instead of only being visible in ``comparisons``.
+            row["exchange_delay"] = readings[BLOOMBERG]["exchange_delay"]
         out_rows.append(row)
 
     answering_rows = [r for r in out_rows if r["data_provider"] != "NONE"]
@@ -570,6 +783,16 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
     }
     overall = provider_from_answered(answered)
 
+    skip_warnings: list[str] = []
+    if bb_skipped:
+        skip_warnings.append(
+            "Bloomberg was not asked about "
+            + ", ".join(bb_skipped)
+            + f": its page path is paced at 10 s per request, so a batch asks it "
+            f"about at most {BLOOMBERG_BATCH_MAX} tickers. Those rows are not "
+            "counted as Bloomberg-answered."
+        )
+
     return finalize(
         pair,
         specs=(),
@@ -577,8 +800,10 @@ async def stock_prices(tickers: str) -> dict[str, Any]:
             TRADINGVIEW: "scanner.tradingview.com",
             FINVIZ: "finviz.com/screener/stocks",
             YAHOO: "query1.finance.yahoo.com/v8/finance/chart",
+            BLOOMBERG: "bloomberg.com/quote/<id>",
         },
         extra={"symbols": requested},
+        warnings=skip_warnings,
         data=out_rows,
         provider=overall,
         health_warn=MONITOR.warnings_for(providers_in(pair) or ALL_PROVIDERS),

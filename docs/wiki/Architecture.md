@@ -18,19 +18,19 @@
   symbols.resolve()  ──►  one ticker per provider, cached 1 h
       │
       ▼
-  reconcile.ask(tv_fn, fv_fn, yh_fn)  ──►  asyncio.gather, never raises
+  reconcile.ask(tv_fn, fv_fn, yh_fn, bb_fn)  ──►  asyncio.gather, never raises
       │
       ├──► tv_access ──► providers/tradingview/native ──► scanner.tradingview.com
       │                                              └──► data.tradingview.com (ws)
       ├──► fv_access ──► providers/finviz ─────────────► finviz.com (HTML + /api/*)
-      └──► yh_access ──► Yahoo chart API ──────────────► query1.finance.yahoo.com
+      ├──► yh_access ──► Yahoo chart API ──────────────► query1.finance.yahoo.com
+      └──► bb_access ──► curl_cffi (TLS impersonation) ► bloomberg.com/quote/<id>
 
-  (separately, never reconciled)
-  tools_bloomberg ──► bb_access ──► curl_cffi (TLS impersonation) ──► bloomberg.com
+  tools_bloomberg ──► bb_access (same adapter, one provider asked, so single-source)
       │
       │  every request above goes through ratelimit.limiter(PROVIDER)
       ▼
-  Pair(tv=Attempt, fv=Attempt, yh=Attempt)
+  Pair(tv=Attempt, fv=Attempt, yh=Attempt, bb=Attempt)
       │
       ▼
   reconcile.finalize() ──► merge_many() ──► comparisons + per-field fields
@@ -61,12 +61,12 @@ src/tapebasis/
 ├── tv_access.py          typed access to TradingView's own data
 ├── fv_access.py          typed access to the Finviz provider
 ├── yh_access.py          typed access to the Yahoo Finance provider
-├── bb_access.py          typed access to bloomberg.com (single-source, curl_cffi)
+├── bb_access.py          typed access to bloomberg.com (fourth leg, curl_cffi)
 ├── catalog.py            plain-data tool catalogue (providers + comparison strategy)
 ├── tools_market.py       the 9 multi-source market tools
 ├── tools_finviz.py       the 7 Finviz-only tools
 ├── tools_tradingview.py  TradingView-only tools + combined_analysis
-├── tools_bloomberg.py    the 2 Bloomberg-only tools (single-source)
+├── tools_bloomberg.py    the 2 Bloomberg-only tools (one provider asked)
 ├── tools_health.py       tapebasis_health + tapebasis_tool_map
 └── providers/
     ├── tradingview/      provider layer (scanner, chart ws, TA, backtest, …)
@@ -86,7 +86,7 @@ access module and its own upstream:
 | TradingView | `tv_access.py` → `providers/tradingview/native.py` | `scanner.tradingview.com` (quotes, screener), `data.tradingview.com` (chart websocket for OHLCV) |
 | Finviz | `fv_access.py` | `finviz.com` HTML pages and `/api/*` JSON islands |
 | Yahoo Finance | `yh_access.py` | `query1.finance.yahoo.com/v8/finance/chart` |
-| Bloomberg (single-source) | `bb_access.py` | `bloomberg.com/quote/<id>` and `/markets/rates-bonds`, through `curl_cffi` |
+| Bloomberg | `bb_access.py` | `bloomberg.com/quote/<id>` and `/markets/rates-bonds`, through `curl_cffi` |
 
 An earlier version of this server had TradingView's price come from Yahoo's chart API. That made the
 two legs the same upstream wearing different labels: a comparison that could only ever agree. The
@@ -108,15 +108,24 @@ Provider code does not import anything from the orchestration layer. That one-wa
 keeps the boundary real rather than decorative. It is why the token-free sentiment fallback lives in
 `tools_tradingview.py` and not inside `marketaux_service.py`.
 
-### Bloomberg is an adapter outside the reconciliation path
+### Bloomberg is an adapter with one difference: a declared delay
 
-`bb_access.py` sits beside the three reconciliation adapters but is deliberately not one of them: it
-is never passed to `reconcile.ask`, its label is absent from `PROVIDER_ORDER`, and no comparison row
-can contain it. Making it a fourth leg would not add an independent reading (its statics duplicate
-Yahoo's, its equity quotes are delayed), and its `lastUpdate` is a session sentinel that would win a
-freshness arbitration it should lose. The adapter is also the only one that needs `curl_cffi`: the
-site gates plain HTTP clients on the TLS fingerprint, so it cannot share the `httpx` path the others
-use. See [Design Decisions](Design-Decisions) 30.
+`bb_access.py` is the fourth reconciliation adapter. It is passed to `reconcile.ask` like the others,
+its label is in `PROVIDER_ORDER`, and its readings appear in `comparisons`. Two things needed handling
+rather than exclusion:
+
+- **A declared delay is a comparability boundary.** Its equity and index prints are 15 minutes old by
+  design, so a pair that far apart is reported as `not_comparable` with the delay named, and the
+  adapter is last in `DEFAULT_ORDER` so a delayed page can never win a freshness tie. Its
+  `lastUpdate` is a session sentinel, so `print_time` is derived from the last intraday point and
+  refused when that point does not match the quoted price.
+- **Its own transport.** It is the only adapter that needs `curl_cffi`: the site gates plain HTTP
+  clients on the TLS fingerprint, so it cannot share the `httpx` path the others use. That is also
+  why the health monitor has no probe for it.
+
+`tools_bloomberg.py` reuses the same adapter for the case where only Bloomberg is asked, and marks
+those responses `cross_checked: false` / `reconciliation_leg: false`. See
+[Design Decisions](Design-Decisions) 30.
 
 ### `tv_access.py` / `fv_access.py` / `yh_access.py` are adapters, not wrappers
 

@@ -8,8 +8,8 @@ A provider that catches its own exception looks healthy from the outside. So the
 upstream **independently of the provider code paths**: it can fail even when every tool call
 succeeds, and that failure is the signal.
 
-The probe set covers the providers that participate in reconciliation (TradingView, Finviz, Yahoo).
-Bloomberg is served single-source and is not probed, see below.
+The probe set covers three of the four reconciliation legs (TradingView, Finviz, Yahoo). Bloomberg is
+a leg too, but it cannot be probed, see below.
 
 ## Probes
 
@@ -30,9 +30,9 @@ impersonation version gets 200. A probe built on `httpx` would therefore report 
 healthy provider. The same asymmetry blocks a meaningful probe on the `curl_cffi` path, because the
 monitor's contracts are HTTP-level ones. Instead, `bloomberg_quote` / `bloomberg_markets` report the
 failure they actually hit (`UPSTREAM_BLOCKED`, `SCHEMA_DRIFT`, `NOT_CONFIGURED` when `curl_cffi` is
-missing), and the tool response is the availability signal. Bloomberg is also absent from
-`providers_answered` in `tapebasis_tool_map` for the same reason it is absent from `PROVIDER_ORDER`:
-it is not a reconciliation leg.
+missing), and the tool response is the availability signal. `tapebasis_tool_map` names Bloomberg in
+`providers_answered` and warns that it is the one provider with no probe, so the gap is stated rather
+than implied.
 
 The two extra Yahoo probes exist because the FX and crypto ticker conventions are separate
 assumptions. A probe that only checked `AAPL` would keep reporting `OK` while `EURUSD=X` silently
@@ -136,8 +136,8 @@ Returns per-probe status, message, fingerprint, and whether the result matches t
 
 `BLOOMBERG` appears under `rate_limits` but not under `providers`: it is paced like any other
 upstream, and it is not probed. A positive `cooling_down_s` there means the bot wall answered 403 and
-the provider paused itself, which is the explanation for a `bloomberg_*` response that came back
-`NONE` with `UPSTREAM_BLOCKED`.
+the provider paused itself, which explains both a `bloomberg_*` response that came back `NONE` with
+`UPSTREAM_BLOCKED` and a `TIMEOUT` error on the Bloomberg leg of `stock_quote`.
 
 A positive `cooling_down_s` means a provider is paused right now: after a `429`, or after the
 Bloomberg bot wall answered 403. That is usually the explanation for a response that suddenly went

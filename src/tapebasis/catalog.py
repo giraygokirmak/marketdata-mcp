@@ -20,17 +20,21 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "providers": "ALL",
         "comparison": "price, change %, previous close, volume, 52-week high/low, P/E, RSI(14)",
         "notes": (
-            "TradingView's scanner, Finviz's quote page and Yahoo's chart API are each "
-            "asked natively, no provider proxies another. Each compared field resolves "
-            "to ONE value: the reading from whichever provider printed more recently "
-            "(see `freshness`); every original stays in `comparisons`. Ties fall back to "
-            "Finviz. Finviz-only fields (the 84-field snapshot, profile, peers, "
-            "after-hours) ride along labelled per field in `fields`. Symbols are resolved "
-            "per provider, so XAUUSD becomes OANDA:XAUUSD, Yahoo reports that it has no "
-            "spot-gold pair, and Finviz is told it does not carry it; see `resolutions`. "
-            "A day change is only compared when the prints share a US/Eastern session "
-            "date and are within 15 minutes, and are not stale against the clock; "
-            "otherwise the field is reported as not cross-checked. On FX it is never "
+            "TradingView's scanner, Finviz's quote page, Yahoo's chart API and "
+            "Bloomberg's quote page are each asked natively in parallel, no provider "
+            "proxies another. Each compared field resolves to ONE value: the reading "
+            "from whichever provider printed more recently (see `freshness`); every "
+            "original stays in `comparisons`. Ties fall back to Finviz, then "
+            "TradingView, then Yahoo, then Bloomberg. Finviz-only fields (the 84-field "
+            "snapshot, profile, peers, after-hours) ride along labelled per field in "
+            "`fields`. Symbols are resolved per provider, so XAUUSD becomes "
+            "OANDA:XAUUSD for TradingView, EURUSD:CUR for Bloomberg, and Finviz is told "
+            "it does not carry it; see `resolutions`. A price or day change is only "
+            "compared when the prints are within 15 minutes and share a US/Eastern "
+            "session date; otherwise the field is reported as not cross-checked. "
+            "Bloomberg's equity prints are 15 minutes delayed, so it often lands in "
+            "`not_comparable` rather than in the agreement count: that is the delay "
+            "being stated, not a provider fault. On FX the day change is never "
             "compared: spot FX has no single official previous close."
         ),
     },
@@ -45,7 +49,9 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
             "the others. Multi-source rows also carry `price_source`, whose print the "
             "single `price` came from, plus their own `comparisons` block. An FX day "
             "change is reported but never compared, for the same reason as in "
-            "`stock_quote`."
+            "`stock_quote`. Bloomberg is asked about at most 4 tickers per batch because "
+            "its page path is paced at 10 s per request; the rest are named in "
+            "`warnings` and are not counted as Bloomberg-answered."
         ),
     },
     {
@@ -185,27 +191,28 @@ TOOL_CATALOG: tuple[dict[str, object], ...] = (
         "comparison": "single-source",
         "notes": "Finviz's proprietary filter vocabulary; TradingView uses different column names.",
     },
-    # ── Bloomberg: served, labelled BLOOMBERG, never a reconciliation leg ────
+    # ── Bloomberg-only tools: one provider asked, so one provider labelled ───
     {
         "name": "bloomberg_quote",
         "capability": "Bloomberg's own quote page for one instrument",
         "providers": "BLOOMBERG",
-        "comparison": "single-source, never cross-checked",
+        "comparison": "single-source: this tool asks only Bloomberg",
         "notes": (
-            "Bloomberg is outside the reconciliation set, so it never contributes to "
-            "`ALL` and never enters `comparisons`. Its equity quotes are delayed "
-            "(`exchangeDelay` is 15 Minutes), its static fields duplicate Yahoo's, and "
-            "its `lastUpdate` is a session sentinel: `print_time` therefore comes from "
-            "the last intraday point, and is null when that point does not match the "
-            "quoted price. Use `stock_quote` for a corroborated price; use this when "
-            "the caller wants Bloomberg's reading specifically."
+            "A call to this tool queries one provider, so it cannot be cross-checked; "
+            "the provider itself is a full leg of `stock_quote` / `stock_prices`. Its "
+            "equity quotes are delayed (`exchangeDelay` is 15 Minutes), its static "
+            "fields duplicate Yahoo's, and its `lastUpdate` is a session sentinel: "
+            "`print_time` therefore comes from the last intraday point, and is null "
+            "when that point does not match the quoted price. Use `stock_quote` for a "
+            "corroborated price; use this when the caller wants Bloomberg's reading "
+            "specifically."
         ),
     },
     {
         "name": "bloomberg_markets",
         "capability": "Bloomberg market board: index levels, government benchmark yields, commodities, FX",
         "providers": "BLOOMBERG",
-        "comparison": "single-source, never cross-checked",
+        "comparison": "single-source: this tool asks only Bloomberg",
         "notes": (
             "The government benchmark yield curve is the capability no other provider "
             "here publishes; index, commodity and FX levels ride along as context. The "

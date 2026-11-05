@@ -1,14 +1,15 @@
 """Typed access to bloomberg.com's public quote pages.
 
-Bloomberg is deliberately **not** a reconciliation leg here. It is a narrow,
-single-source provider: it is asked only for data no other provider in this
-server carries (the government benchmark yield board), plus a quote page for
-callers who explicitly want Bloomberg's own reading. It never contributes to
-``data_provider == ALL``, because it would not strengthen that claim:
+Bloomberg is the fourth reconciliation leg: ``stock_quote`` and ``stock_prices``
+ask it in parallel with TradingView, Finviz and Yahoo, its readings appear in
+``comparisons``, and it contributes to ``ALL``. Three properties of the feed are
+handled here rather than hidden by a tolerance:
 
-* its equity quotes are delayed (``exchangeDelay`` is ``15 Minutes``),
-* its static fields are penny-identical to Yahoo's, so it is not an
-  independent cross-check on them,
+* its equity and index quotes are delayed (``exchangeDelay`` is
+  ``15 Minutes``), so the print time is reported truthfully and the reconciler
+  treats a pair that far apart as *not comparable* instead of as a disagreement,
+* its static fields are penny-identical to Yahoo's, so agreement between those
+  two is weak corroboration, not two independent witnesses; the docs say so,
 * ``lastUpdate`` is a session sentinel (``...T01:00:00Z``), not a print time.
   Using it would make a stale page look newer than a live print.
 

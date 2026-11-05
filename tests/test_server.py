@@ -137,6 +137,7 @@ async def test_tool_map_is_not_mislabelled_for_bloomberg():
     assert fields["bloomberg_quote"] == "BLOOMBERG"
     assert fields["bloomberg_markets"] == "BLOOMBERG"
     assert fields["stock_quote"] == "ALL"
-    # Bloomberg is not a reconciliation leg, so it is not in providers_answered.
-    assert "BLOOMBERG" not in response["providers_answered"]
-    assert any("not a reconciliation leg" in warning for warning in response["warnings"])
+    # Bloomberg is a leg of the quote tools, but it has no health probe, and
+    # the map says so rather than implying it was probed.
+    assert "BLOOMBERG" in response["providers_answered"]
+    assert any("no health probe" in warning for warning in response["warnings"])

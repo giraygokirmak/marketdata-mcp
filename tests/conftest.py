@@ -38,6 +38,24 @@ def _isolate_health_state(tmp_path, monkeypatch):
     yield monitor
 
 
+@pytest.fixture(autouse=True)
+def _no_bloomberg_network(monkeypatch):
+    """Fail loudly if any test reaches bloomberg.com.
+
+    Bloomberg is asked by ``stock_quote`` and ``stock_prices``, so a fixture
+    that forgets to fake it would otherwise hit the live site (and the bot
+    wall) from the test suite. Tests that exercise the page decoder patch
+    ``_fetch_html`` themselves, which overrides this.
+    """
+    from tapebasis import bb_access
+
+    async def refuse(path, cache_key):
+        raise AssertionError(f"test attempted a live bloomberg.com fetch of {path}")
+
+    monkeypatch.setattr(bb_access, "_fetch_html", refuse)
+    yield
+
+
 @pytest.fixture
 def tv_quote():
     """A TradingView scanner row, as ``native.scan`` returns it."""

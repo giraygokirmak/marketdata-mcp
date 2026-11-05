@@ -44,11 +44,31 @@ from .providers_state import (
 TRADINGVIEW = "TRADINGVIEW"
 FINVIZ = "FINVIZ"
 YAHOO = "YAHOO"
+BLOOMBERG = "BLOOMBERG"
 
 #: Tie-break order when no provider reports a usable print time, or two report
 #: the identical instant. Fixed and documented rather than "whichever was asked
-#: first", so the same inputs always resolve to the same number.
-DEFAULT_ORDER: tuple[str, ...] = (FINVIZ, TRADINGVIEW, YAHOO)
+#: first", so the same inputs always resolve to the same number. Bloomberg is
+#: last: when its delayed page ties with a live feed on the same instant, the
+#: live feed is the reading to show.
+DEFAULT_ORDER: tuple[str, ...] = (FINVIZ, TRADINGVIEW, YAHOO, BLOOMBERG)
+
+#: Providers whose prints can be structurally older than a live feed's, with
+#: the delay they declare and the sentence that explains it.
+#:
+#: This is a *comparability* rule, not a tolerance. Two prints one delay-length
+#: apart are not "close enough": the older one describes the market as it was
+#: then, and calling the difference a disagreement would blame the provider for
+#: a delay it states. So a pair that includes such a provider is not comparable
+#: as soon as the gap reaches the declared delay, and comparable below it (a
+#: closed market prints both at the same instant, which is a real agreement).
+KNOWN_REPORTING_LAG: dict[str, tuple[float, str]] = {
+    BLOOMBERG: (
+        900.0,
+        "Bloomberg states that its equity and index quotes are exchange-delayed "
+        "(15 Minutes), so the older print is the intended lag, not a conflict",
+    ),
+}
 
 
 # ── Attempts ─────────────────────────────────────────────────────────────────
@@ -100,6 +120,10 @@ class Pair:
     @property
     def yh(self) -> Attempt:
         return self._get(YAHOO)
+
+    @property
+    def bb(self) -> Attempt:
+        return self._get(BLOOMBERG)
 
     def _get(self, provider: str) -> Attempt:
         return self.attempts.get(
@@ -191,6 +215,7 @@ async def ask(
     tv_fn: Callable[[], Awaitable[Any]] | None = None,
     fv_fn: Callable[[], Awaitable[Any]] | None = None,
     yahoo_fn: Callable[[], Awaitable[Any]] | None = None,
+    bb_fn: Callable[[], Awaitable[Any]] | None = None,
 ) -> Pair:
     """Run every supplied provider call concurrently.
 
@@ -214,6 +239,7 @@ async def ask(
         (TRADINGVIEW, tv_fn),
         (FINVIZ, fv_fn),
         (YAHOO, yahoo_fn),
+        (BLOOMBERG, bb_fn),
     ]
 
     async def _plan(label: str, fn: Callable[[], Awaitable[Any]] | None) -> Attempt:
@@ -355,11 +381,15 @@ def compare_values(
     with a ``reason``) and left out of the agreement decision, while every
     reading stays visible in ``values``.
 
-    Three independent guards narrow what may be compared, in increasing order of
+    Four independent checks narrow what may be compared, in increasing order of
     what they can see:
 
     * ``max_skew_seconds``: distance between the two prints. Blind to a session
       roll, and blind to every provider freezing together.
+    * ``KNOWN_REPORTING_LAG``: a delay the provider itself declares (Bloomberg
+      states 15 minutes on equities and indices). At that distance the pair is
+      two observations, and the reason names the delay instead of blaming the
+      provider for a lag it documents.
     * ``session_boundary``: different US/Eastern session date. Catches a roll
       that a seconds-based ceiling cannot, and is deliberately one-way: it can
       lose a comparison, never manufacture a conflict.
@@ -431,9 +461,8 @@ def compare_values(
             day_a, day_b = session_date(a), session_date(b)
             if day_a is not None and day_b is not None and day_a != day_b:
                 return (
-                    f"prints belong to different sessions ({day_a} and {day_b}); "
-                    f"this field is measured against a session-relative baseline, "
-                    f"so the readings are not comparable"
+                    f"prints belong to different sessions ({day_a} and {day_b}), "
+                    f"so the readings are not the same observation"
                 )
         if max_age_seconds is not None and now is not None:
             for label, stamp in ((left, a), (right, b)):
@@ -449,14 +478,26 @@ def compare_values(
                         f"session, past the {max_age_seconds / 60:.0f}m ceiling; "
                         f"the feed looks frozen, so agreement cannot be asserted"
                     )
+        gap = abs((a - b).total_seconds())
+        # A declared feed delay is a comparability boundary of its own: at one
+        # delay-length apart the two prints are the same market at two instants.
+        for label in (left, right):
+            declared = KNOWN_REPORTING_LAG.get(label)
+            if declared and gap >= declared[0]:
+                return (
+                    f"prints are {gap / 60:.0f}m apart, at least the "
+                    f"{declared[0] / 60:.0f}m delay this provider declares for the "
+                    f"feed, so the readings do not describe the same observation. "
+                    f"{declared[1]}"
+                )
         if max_skew_seconds is None:
             return None
-        gap = abs((a - b).total_seconds())
         if gap <= max_skew_seconds:
             return None
         return (
-            f"prints are {gap / 3600:.1f}h apart; this field is measured against "
-            f"a session-relative baseline, so the readings are not comparable"
+            f"prints are {gap / 60:.0f}m apart, past the "
+            f"{max_skew_seconds / 60:.0f}m window, so the readings do not "
+            f"describe the same observation"
         )
 
     matches: list[bool] = []
@@ -513,10 +554,12 @@ class FieldSpec:
     tolerance_pct: float = 0.5
     absolute_floor: float = 0.0
     yh_get: Callable[[dict[str, Any]], Any] | None = None
+    bb_get: Callable[[dict[str, Any]], Any] | None = None
     #: When set, readings whose observation times differ by more than this many
     #: seconds are reported as *not comparable* instead of as a disagreement.
-    #: Only meaningful for session-relative fields (a day change, a volume), a
-    #: price can be compared across minutes, a session baseline cannot.
+    #: Applies to a session-relative field (a day change, a volume) and to a
+    #: price: a price points at an instant, so two prints minutes apart are two
+    #: observations rather than one number reported twice.
     #:
     #: The floor is the natural skew of two *live* endpoints, not zero: measured
     #: across TradingView and Yahoo it reaches ~600s on thin futures, so a
@@ -545,6 +588,7 @@ class FieldSpec:
             TRADINGVIEW: self.tv_get,
             FINVIZ: self.fv_get,
             YAHOO: self.yh_get,
+            BLOOMBERG: self.bb_get,
         }.get(provider)
         return getter(payload) if getter else None
 
@@ -842,12 +886,15 @@ def finalize(
     tv_norm: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     fv_norm: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     yh_norm: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    bb_norm: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     tv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     fv_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     yh_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    bb_shape: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     tv_time: Any = None,
     fv_time: Any = None,
     yahoo_time: Any = None,
+    bb_time: Any = None,
     now: datetime | None = None,
     sources: dict[str, str] | None = None,
     warnings: Iterable[str] = (),
@@ -860,14 +907,16 @@ def finalize(
 ) -> dict[str, Any]:
     """Reconcile attempts and wrap the result in the public envelope.
 
-    ``tv_norm``/``fv_norm``/``yh_norm`` map a raw provider payload into the
-    normalised field dict that ``specs`` read from; when given, every remaining
-    normalised field is attached to the output labelled with its source
-    provider.
+    ``tv_norm``/``fv_norm``/``yh_norm``/``bb_norm`` map a raw provider payload
+    into the normalised field dict that ``specs`` read from; when given, every
+    remaining normalised field is attached to the output labelled with its
+    source provider.
 
-    ``tv_time``/``fv_time``/``yahoo_time`` are the **market print** timestamps
-    (not fetch times). When providers answered, every compared field resolves to
-    the freshest provider's reading; all originals stay in ``comparisons``.
+    ``tv_time``/``fv_time``/``yahoo_time``/``bb_time`` are the **market print**
+    timestamps (not fetch times). When providers answered, every compared field
+    resolves to the freshest provider's reading; all originals stay in
+    ``comparisons``. ``bb_time`` is passed explicitly because Bloomberg's print
+    time is derived from the intraday series, never from ``lastUpdate``.
 
     ``now`` is the reference clock for a field's absolute-age ceiling. Pass it
     when the tool can observe the real time: without it the frozen-feed guard is
@@ -884,6 +933,7 @@ def finalize(
         (TRADINGVIEW, pair.tv, tv_norm, tv_shape),
         (FINVIZ, pair.fv, fv_norm, fv_shape),
         (YAHOO, pair.yh, yh_norm, yh_shape),
+        (BLOOMBERG, pair.bb, bb_norm, bb_shape),
     ):
         payload = attempt.payload
         if payload is not None and norm is not None:
@@ -898,6 +948,7 @@ def finalize(
         (TRADINGVIEW, tv_time, payloads.get(TRADINGVIEW)),
         (FINVIZ, fv_time, payloads.get(FINVIZ)),
         (YAHOO, yahoo_time, payloads.get(YAHOO)),
+        (BLOOMBERG, bb_time, payloads.get(BLOOMBERG)),
     ):
         stamp = explicit
         if stamp is None and payload is not None:

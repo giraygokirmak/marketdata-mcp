@@ -45,6 +45,8 @@ through a per-provider limiter ([`ratelimit.py`](https://github.com/giraygokirma
 | `TAPEBASIS_BLOOMBERG_IMPERSONATE` | `chrome124` | Browser fingerprint `curl_cffi` presents; `chrome` and `chrome131` are refused |
 | `TAPEBASIS_BLOOMBERG_TIMEOUT` | `30` | bloomberg.com HTTP timeout (s) |
 | `TAPEBASIS_BLOOMBERG_CACHE_TTL` | `60` | Bloomberg page cache lifetime (s) |
+| `TAPEBASIS_BLOOMBERG_QUOTE_DEADLINE` | `12.0` | Longest `stock_quote` waits for its Bloomberg leg before recording a `TIMEOUT` |
+| `TAPEBASIS_BLOOMBERG_BATCH_MAX` | `4` | Tickers per `stock_prices` call asked of Bloomberg |
 
 Some behaviours are not configurable, because they are safety properties rather than tuning knobs:
 
@@ -61,6 +63,11 @@ and stays angry for a while. Bloomberg is paced slowest of all (`10 s`, one at a
 tolerated five requests 10 s apart, while its separate API bucket burned after about ten rapid calls
 and stayed 403 for minutes. Raising concurrency or lowering an interval increases throughput at the
 cost of a block that outlasts the burst.
+
+Because that pace is slow, the quote tools bound the cost instead of hiding it:
+`TAPEBASIS_BLOOMBERG_QUOTE_DEADLINE` turns a queued or blocked leg into a stated `TIMEOUT` while the
+other three readings still go out, and `TAPEBASIS_BLOOMBERG_BATCH_MAX` caps how many tickers one
+`stock_prices` call asks Bloomberg about, naming the rest in `warnings`.
 
 Current limiter state (`min_interval_s`, `max_inflight`, `cooling_down_s`, `block_streak`,
 `cached_entries`) is reported by `tapebasis_health` and `GET /health` under `rate_limits`.
@@ -137,6 +144,8 @@ TAPEBASIS_YAHOO_MIN_INTERVAL=1.0
 TAPEBASIS_YAHOO_MAX_INFLIGHT=1
 TAPEBASIS_BLOOMBERG_MIN_INTERVAL=10.0
 TAPEBASIS_BLOOMBERG_MAX_INFLIGHT=1
+TAPEBASIS_BLOOMBERG_QUOTE_DEADLINE=12.0
+TAPEBASIS_BLOOMBERG_BATCH_MAX=4
 
 # Optional: licensed news + sentiment
 # MARKETAUX_API_TOKEN=

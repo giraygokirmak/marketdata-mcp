@@ -7,9 +7,9 @@ Run over stdio (default) or streamable HTTP::
 
 Every tool response carries ``data_provider`` ∈ ``ALL`` / ``TRADINGVIEW`` /
 ``FINVIZ`` / ``YAHOO`` / ``BLOOMBERG`` / ``NONE``, and any upstream schema drift
-detected by the health monitor is reported inside the same response. Bloomberg
-is single-source only: it is outside the reconciliation set and never
-contributes to ``ALL``.
+detected by the health monitor is reported inside the same response. Bloomberg is
+a reconciliation leg whose equity quotes are exchange-delayed; the delay is
+reported rather than counted as a disagreement.
 """
 from __future__ import annotations
 
@@ -27,20 +27,20 @@ from .providers_state import PROVIDER_MEANING
 logger = logging.getLogger("tapebasis")
 
 INSTRUCTIONS = (
-    "Market data from multiple independent providers (currently TradingView, "
-    "Finviz, Yahoo Finance, plus Bloomberg as an explicitly single-source "
-    "provider), each fetched natively. Every tool result includes "
-    "`data_provider`, one of ALL, TRADINGVIEW, FINVIZ, YAHOO, BLOOMBERG or NONE.\n\n"
+    "Market data from multiple independent providers (TradingView, Finviz, Yahoo "
+    "Finance and Bloomberg), each fetched natively and asked in parallel. Every tool "
+    "result includes `data_provider`, one of ALL, TRADINGVIEW, FINVIZ, YAHOO, "
+    "BLOOMBERG or NONE.\n\n"
     "HOW TO READ IT:\n"
     "- ALL: every provider that was asked answered. This is COVERAGE, not agreement. "
     "Check `comparisons` for whether the readings match, and `providers_answered` for "
     "exactly which providers contributed.\n"
-    "- TRADINGVIEW, FINVIZ or YAHOO: only that provider had the data. You MUST tell the "
-    "user this figure is single-source and not cross-verified.\n"
-    "- BLOOMBERG: a Bloomberg-only tool answered. It is never cross-checked and never "
-    "counted as an independent leg, and its equity quotes are delayed, so say it is "
-    "single-source and check `exchange_delay` / `print_time` before calling a price "
-    "live.\n"
+    "- TRADINGVIEW, FINVIZ, YAHOO or BLOOMBERG: only that provider had the data. You "
+    "MUST tell the user this figure is single-source and not cross-verified.\n"
+    "- BLOOMBERG readings can be structurally older: its equity and index quotes are "
+    "exchange-delayed (typically 15 minutes). Check `exchange_delay` and `print_time` "
+    "before calling such a price live, and relay a `not_comparable` reason instead of "
+    "calling it a provider disagreement.\n"
     "- NONE: no data; do not present a value.\n\n"
     "Only one value is ever returned per field (the newest market print). Every "
     "provider's raw reading stays in `comparisons`, and disagreements are named in "

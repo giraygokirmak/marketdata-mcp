@@ -27,10 +27,17 @@ def _resolved(provider: str, symbol: str | None, *, query: str = "AAPL") -> Reso
 
 @pytest.fixture
 def fake_providers(monkeypatch, tv_quote, fv_quote, yh_quote):
-    """Patch all three access layers with deterministic in-memory providers."""
-    from tapebasis import fv_access, tv_access, yh_access
+    """Patch all four access layers with deterministic in-memory providers.
 
-    state = {"tv": tv_quote, "fv": fv_quote, "yh": yh_quote}
+    ``state["bb"]`` is ``None`` by default: Bloomberg answered, but had no
+    quote for the fixture. That records ``NOT_ATTEMPTED`` rather than a
+    failure, so the three-provider assertions stay meaningful; tests that want
+    the fourth leg set it to a payload.
+    """
+    from tapebasis import bb_access, fv_access, tv_access, yh_access
+    from tapebasis.providers_state import NoDataError
+
+    state = {"tv": tv_quote, "fv": fv_quote, "yh": yh_quote, "bb": None}
 
     async def tv_quote_call(symbol):
         if isinstance(state["tv"], Exception):
@@ -47,6 +54,13 @@ def fake_providers(monkeypatch, tv_quote, fv_quote, yh_quote):
             raise state["yh"]
         return state["yh"]
 
+    async def bb_quote_call(symbol):
+        if state["bb"] is None:
+            raise NoDataError("BLOOMBERG", "Bloomberg has no quote in this fixture")
+        if isinstance(state["bb"], Exception):
+            raise state["bb"]
+        return state["bb"], f"https://www.bloomberg.com/quote/{symbol}"
+
     async def fake_resolve(query, provider, **kwargs):
         symbol = {"TRADINGVIEW": "NASDAQ:AAPL", "FINVIZ": "AAPL", "YAHOO": "AAPL"}.get(provider)
         return _resolved(provider, symbol, query=query)
@@ -54,8 +68,39 @@ def fake_providers(monkeypatch, tv_quote, fv_quote, yh_quote):
     monkeypatch.setattr(tv_access, "quote", tv_quote_call)
     monkeypatch.setattr(fv_access, "quote", fv_quote_call)
     monkeypatch.setattr(yh_access, "quote", yh_quote_call)
+    monkeypatch.setattr(bb_access, "quote", bb_quote_call)
     monkeypatch.setattr(tools_market, "resolve", fake_resolve)
     return state
+
+
+def _bloomberg_quote(*, price=331.9, print_time="2026-11-03T21:00:01+00:00"):
+    """Bloomberg's shaped quote, as ``bb_access.shape_quote`` would return it."""
+    return {
+        "symbol": "AAPL:US",
+        "requested": "AAPL",
+        "name": "APPLE INC",
+        "price": price,
+        "change_percent": -1.9,
+        "previous_close": 338.32,
+        "currency": "USD",
+        "exchange": "NASDAQ GS",
+        "day_range": [330.5, 338.0],
+        "week_52_range": [243.42, 351.73],
+        "volume": 63160515.0,
+        "pe_ratio": 36.5,
+        "eps": 8.98,
+        "market_status": "ACTV",
+        "is_open": False,
+        "is_after_hours": True,
+        "is_exchange_delayed": True,
+        "exchange_delay": "15 Minutes",
+        "trading_date": "2026-11-03",
+        "trading_day_close": "2026-11-03T21:00:00.000Z",
+        "print_time": print_time,
+        "print_time_source": "priceMovements1Day[-1].dateTime",
+        "print_time_missing_reason": None,
+        "provider_last_update": "2026-11-04T01:00:00.000Z",
+    }
 
 
 @pytest.mark.asyncio
@@ -134,13 +179,17 @@ async def test_symbol_finviz_does_not_carry_is_not_an_error(
     monkeypatch, tv_quote, yh_quote
 ):
     """XAUUSD: TradingView and Yahoo answer, Finviz has no page. Not a failure."""
-    from tapebasis import tv_access, yh_access
+    from tapebasis import bb_access, tv_access, yh_access
+    from tapebasis.providers_state import NoDataError
 
     async def tv_quote_call(symbol):
         return {**tv_quote, "close": 4046.42}
 
     async def yh_quote_call(symbol):
         return {**yh_quote, "price": 4046.42}
+
+    async def bb_unavailable(symbol):
+        raise NoDataError("BLOOMBERG", "no page in this fixture")
 
     async def fake_resolve(query, provider, **kwargs):
         return {
@@ -151,6 +200,7 @@ async def test_symbol_finviz_does_not_carry_is_not_an_error(
 
     monkeypatch.setattr(tv_access, "quote", tv_quote_call)
     monkeypatch.setattr(yh_access, "quote", yh_quote_call)
+    monkeypatch.setattr(bb_access, "quote", bb_unavailable)
     monkeypatch.setattr(tools_market, "resolve", fake_resolve)
 
     result = await tools_market.stock_quote("XAUUSD")
@@ -254,3 +304,121 @@ async def test_every_value_survives_in_comparisons_after_selection(fake_provider
     assert row["match"] is False
     assert row["chosen"] == "TRADINGVIEW"
     assert "Providers disagree on: price" in result["warnings"]
+
+
+# ── Bloomberg as the fourth leg ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_quote_counts_bloomberg_when_it_answers(fake_providers):
+    """Four providers answered: coverage is ALL and all four are named."""
+    fake_providers["bb"] = _bloomberg_quote()
+    result = await tools_market.stock_quote("AAPL")
+    assert result["data_provider"] == "ALL"
+    assert result["providers_answered"] == [
+        "TRADINGVIEW",
+        "FINVIZ",
+        "YAHOO",
+        "BLOOMBERG",
+    ]
+    assert result["errors"] == []
+    price_row = next(c for c in result["comparisons"] if c["field"] == "price")
+    assert price_row["values"]["BLOOMBERG"] == pytest.approx(331.9)
+    # The delay travels with the payload, not only inside the comparison block.
+    assert result["data"]["exchange_delay"] == "15 Minutes"
+    assert result["data"]["print_time"] == "2026-11-03T21:00:01+00:00"
+
+
+@pytest.mark.asyncio
+async def test_quote_reports_a_delayed_bloomberg_print_as_not_comparable(fake_providers):
+    """15 minutes behind is a different observation, never a disagreement."""
+    fake_providers["bb"] = _bloomberg_quote(print_time="2026-11-03T20:30:00+00:00")
+    result = await tools_market.stock_quote("AAPL")
+    price_row = next(c for c in result["comparisons"] if c["field"] == "price")
+    pairs = {tuple(p["between"]): p for p in price_row["pairs"]}
+    for other in ("TRADINGVIEW", "FINVIZ", "YAHOO"):
+        pair = pairs[(other, "BLOOMBERG")]
+        assert pair["match"] is None
+        assert "exchange-delayed" in pair["not_comparable"]
+    # The delayed reading is still visible, and it did not become a conflict.
+    assert price_row["values"]["BLOOMBERG"] == pytest.approx(331.9)
+    assert "disagree" not in result["notice"]
+
+
+@pytest.mark.asyncio
+async def test_bloomberg_never_wins_the_freshness_tie_break(fake_providers):
+    """On a tied instant the live feed is shown, not the delayed page."""
+    fake_providers["bb"] = _bloomberg_quote()
+    result = await tools_market.stock_quote("AAPL")
+    assert result["freshness"]["chosen"] != "BLOOMBERG"
+
+
+@pytest.mark.asyncio
+async def test_bloomberg_failure_is_an_error_not_a_lost_response(fake_providers):
+    from tapebasis.providers_state import ProviderError
+
+    # The fixture raises whatever exception object the state holds.
+    fake_providers["bb"] = ProviderError(
+        "BLOOMBERG", "HTTP 403 bot wall", code="UPSTREAM_BLOCKED"
+    )
+    result = await tools_market.stock_quote("AAPL")
+    assert result["data_provider"] == "ALL"
+    assert result["providers_answered"] == ["TRADINGVIEW", "FINVIZ", "YAHOO"]
+    assert [e["provider"] for e in result["errors"]] == ["BLOOMBERG"]
+    assert result["data"]["price"] == pytest.approx(331.9)
+
+
+@pytest.mark.asyncio
+async def test_prices_ask_bloomberg_and_keep_the_delay_visible(fake_providers, monkeypatch):
+    from tapebasis import fv_access, tv_access
+
+    async def tv_quotes(symbols):
+        # ``tv_access.quotes`` returns rows keyed by bare ticker.
+        return {
+            "AAPL": {
+                "ticker": "NASDAQ:AAPL",
+                "close": 331.9,
+                "change": -1.9,
+                "volume": 63160515,
+                "update_time": "2026-11-03T21:00:01+00:00",
+            }
+        }
+
+    async def fv_rows(symbols):
+        return [
+            {
+                "ticker": "AAPL",
+                "price": 331.9,
+                "change": -1.9,
+                "prevClose": 338.32,
+                "last_update": "2026-11-03T20:59:00+00:00",
+            }
+        ]
+
+    async def yh_quote(symbol):
+        return {
+            "price": 331.9,
+            "change_pct": -1.9,
+            "previous_close": 338.32,
+            "market_time": "2026-11-03T21:00:01+00:00",
+            "shortName": "Apple Inc.",
+        }
+
+    monkeypatch.setattr(tv_access, "quotes", tv_quotes)
+    monkeypatch.setattr(fv_access, "screener_rows", fv_rows)
+    from tapebasis import yh_access
+
+    monkeypatch.setattr(yh_access, "quote", yh_quote)
+    fake_providers["bb"] = _bloomberg_quote()
+
+    result = await tools_market.stock_prices("AAPL")
+    row = result["data"][0]
+    assert row["data_provider"] == "ALL"
+    assert row["providers_answered"] == [
+        "TRADINGVIEW",
+        "FINVIZ",
+        "YAHOO",
+        "BLOOMBERG",
+    ]
+    assert row["exchange_delay"] == "15 Minutes"
+    assert row["comparisons"]["price"]["values"]["BLOOMBERG"] == pytest.approx(331.9)

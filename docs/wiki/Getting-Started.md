@@ -85,27 +85,29 @@ tapebasis_tool_map()           # what is multi-sourced, before calling anything
 {
   "data_provider": "ALL",
   "verification": "MULTI_SOURCE",
-  "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO"],
-  "notice": "Every provider asked answered (TradingView, Finviz and Yahoo Finance). Coverage is ALL; agreement is a separate axis. Compared fields agree within tolerance. The value shown is FINVIZ's because it printed more recently than the other providers'.",
+  "providers_answered": ["TRADINGVIEW", "FINVIZ", "YAHOO", "BLOOMBERG"],
+  "notice": "Every provider asked answered (TradingView, Finviz, Yahoo Finance and Bloomberg). Coverage is ALL; agreement is a separate axis. Compared fields agree within tolerance. The value shown is FINVIZ's because it printed more recently than the other providers'.",
   "data": { "price": 332.33, "previous_close": 331.9, ... },
   "fields": { "price": "ALL", "peers": "FINVIZ" },
   "freshness": {
     "tradingview": "2026-11-04T00:59:53+00:00",
     "finviz": "2026-11-04T10:42:00+00:00",
     "yahoo": "2026-11-03T21:00:01+00:00",
+    "bloomberg": "2026-11-04T10:27:00+00:00",
     "chosen": "FINVIZ",
     "decision": "newest",
     "newest_print": "2026-11-04T10:42:00+00:00"
   },
   "comparisons": [
     { "field": "price", "match": true,
-      "values": { "TRADINGVIEW": 331.9, "FINVIZ": 332.33, "YAHOO": 331.9 },
+      "values": { "TRADINGVIEW": 331.9, "FINVIZ": 332.33, "YAHOO": 331.9, "BLOOMBERG": 332.1 },
       "diff_pct": 0.1294 }
   ],
   "resolutions": {
     "TRADINGVIEW": { "symbol": "NASDAQ:AAPL", "method": "search" },
     "FINVIZ": { "symbol": "AAPL", "method": "normalise" },
-    "YAHOO": { "symbol": "AAPL", "method": "alias" }
+    "YAHOO": { "symbol": "AAPL", "method": "alias" },
+    "BLOOMBERG": { "symbol": "AAPL:US", "method": "mechanical" }
   },
   "warnings": [
     "Not cross-checked (no shared basis for comparison): change_percent, previous_close, volume"
@@ -127,10 +129,10 @@ Five things to notice:
 5. `resolutions` shows the ticker each provider was asked for. This is where a symbol surprise
    becomes explicable.
 
-If `data_provider` were `TRADINGVIEW`, `FINVIZ` or `YAHOO`, the notice would say the data is
-**not corroborated** and an agent must relay that. `BLOOMBERG` works the same way, with one extra
-fact stated: it is single-source *by design* and never cross-checked, and its equity quotes are
-delayed, so `exchange_delay` and `print_time` travel with the payload.
+If `data_provider` were `TRADINGVIEW`, `FINVIZ`, `YAHOO` or `BLOOMBERG`, the notice would say the data
+is **not corroborated** and an agent must relay that. A `BLOOMBERG` label is worth one extra check:
+its equity and index quotes are exchange-delayed, so `exchange_delay` and `print_time` travel with the
+payload and decide whether the number can be called live.
 
 ## A single-source instrument
 
@@ -148,7 +150,8 @@ stock_quote("XAUUSD")
   "resolutions": {
     "TRADINGVIEW": { "symbol": "OANDA:XAUUSD", "method": "search" },
     "FINVIZ": { "symbol": null, "note": "Finviz carries US equities/ETFs only" },
-    "YAHOO": { "symbol": null, "note": "Yahoo Finance has no spot gold pair; its nearest series is COMEX gold futures (GC=F), a different instrument, not substituted." }
+    "YAHOO": { "symbol": null, "note": "Yahoo Finance has no spot gold pair; its nearest series is COMEX gold futures (GC=F), a different instrument, not substituted." },
+    "BLOOMBERG": { "symbol": "XAUUSD:CUR", "method": "mechanical" }
   },
   "errors": []
 }
@@ -157,9 +160,10 @@ stock_quote("XAUUSD")
 Gold is a good demonstration of the rules: the data is served rather than withheld, and the label
 says it is single-source. `errors` is empty because no provider *failed*: two simply do not carry
 spot gold, and Yahoo's note refuses to substitute a futures contract for a spot pair. A different
-instrument at a different price is not the same quote.
+instrument at a different price is not the same quote. Bloomberg does carry it (`XAUUSD:CUR`), so in
+practice this response is `ALL` over TradingView and Bloomberg, with both readings in `comparisons`.
 
-## Bloomberg: the provider that is not a cross-check
+## Bloomberg: one provider asked, so single-source
 
 ```
 bloomberg_markets()
@@ -185,11 +189,13 @@ bloomberg_markets()
 }
 ```
 
-Bloomberg has its own label but no seat at the comparison table: it is not in `PROVIDER_ORDER`, so it
-cannot contribute to `ALL`. `bloomberg_quote("AAPL")` returns its delayed quote page; a corroborated
-price still comes from `stock_quote`. The government benchmark curve is the capability no other
-provider here publishes, which is why the provider is served at all. Access needs `curl_cffi`, which
-`pip install -e .` brings in: bloomberg.com rejects plain HTTP clients on the TLS fingerprint.
+This tool asks one provider, so the payload is single-source by construction. The provider itself is
+not: `stock_quote` asks Bloomberg in parallel with the other three, and its reading appears in
+`comparisons`. There its declared 15-minute delay is handled openly: a pair a delay length apart is
+reported as `not_comparable` with the reason, and a delayed page never wins a freshness tie. The
+government benchmark curve is the capability no other provider here publishes, which is why the
+provider is worth asking at all. Access needs `curl_cffi`, which `pip install -e .` brings in:
+bloomberg.com rejects plain HTTP clients on the TLS fingerprint.
 
 ## Next
 

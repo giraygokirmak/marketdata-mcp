@@ -1,18 +1,17 @@
 """tapebasis: one MCP server, multiple market-data providers, cross-verified.
 
 The server fans every overlapping request out to every upstream provider that
-can serve it (TradingView, Finviz and Yahoo Finance), compares the answers, and
-labels each response with exactly one :data:`data_provider` value:
+can serve it (TradingView, Finviz, Yahoo Finance and Bloomberg), compares the
+answers, and labels each response with exactly one :data:`data_provider` value:
 
 ``ALL``
     Every provider that was asked answered. This is a statement about
     *coverage*, not about agreement: agreement is reported separately in
     ``comparisons`` and summarised in ``notice``.
-``TRADINGVIEW`` / ``FINVIZ`` / ``YAHOO``
+``TRADINGVIEW`` / ``FINVIZ`` / ``YAHOO`` / ``BLOOMBERG``
     Only that provider produced data. Served, but explicitly single-source.
-``BLOOMBERG``
-    Only Bloomberg produced data. Served single-source, and never cross-checked:
-    it is outside the reconciliation set, so it cannot contribute to ``ALL``.
+    Bloomberg's quote pages are exchange-delayed, so its payload carries the
+    delay and a print time derived from the intraday series.
 ``NONE``
     No provider produced data.
 
